@@ -34,6 +34,7 @@ You can test this without publishing to the GNOME Extensions store.
 2. Clone this repository and run the installer:
 
    ```bash
+   cd ~
    git clone https://github.com/criger/zorinos-fisheye-taskbar.git
    cd zorinos-fisheye-taskbar
    bash scripts/install-local.sh
