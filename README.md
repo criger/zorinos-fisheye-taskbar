@@ -12,7 +12,9 @@ The goal is to **keep the native taskbar** and add only a visual effect. We must
 
 ## Status
 
-**v0.1 — experimental. GNOME runtime behavior has NOT yet been verified.** The source and automated geometry tests are available, but the first real test must be performed on Zorin OS 18 / GNOME 46.
+**v0.1 — experimental, but successfully tested on Zorin OS 18 / GNOME 46.** The author reports that fisheye magnification works on all Zorin desktop layouts tested with a bottom-positioned taskbar, including layouts that do not resemble Windows. The left-side **vertical** layout is a known limitation: magnification did not work there in the initial test.
+
+These are firsthand desktop observations, not a complete compatibility or regression test.
 
 ## Expected behavior
 
@@ -20,29 +22,32 @@ The goal is to **keep the native taskbar** and add only a visual effect. We must
 - Icons nearest the pointer grow; nearby icons grow less, using a cosine falloff.
 - An input-transparent Clutter clone draws above the taskbar to avoid clipping the magnified icons.
 - No replacement taskbar, new autohide behavior or reserved-screen-area changes.
-- Initial target: GNOME Shell 46 with Zorin Taskbar.
+- Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
 
-**Known limitations:** The prototype draws a magnified visual overlay but does not reposition neighboring native icons. They may overlap while enlarged. Zorin Taskbar's internal actor structure is not a stable public API. Different scaling, multi-monitor setups, X11/Wayland, drag-and-drop and autohide still require manual verification.
+**Known limitations:** Magnification did not work with the left-side vertical taskbar layout in the initial Zorin test. The prototype draws a magnified visual overlay but does not reposition neighboring native icons; they may overlap while enlarged. Zorin Taskbar's internal actor structure is not a stable public API. Different scaling, multi-monitor setups, X11/Wayland, drag-and-drop and autohide still need systematic regression testing.
 
 ## Local installation (Zorin OS 18)
 
 You can test this without publishing to the GNOME Extensions store.
 
-1. Clone or download this repository.
-2. Enable the original Zorin Taskbar and disable competing dock extensions (for example MacOS Dock and Dash2Dock Animated).
-3. Run the installer from the repository root:
+1. **Disable any other dock extensions** you may have enabled (for example MacOS Dock or Dash2Dock Animated), but **keep Zorin's built-in Taskbar enabled**. You can use any of the Zorin layout presets tested with a taskbar along the bottom; the left-side vertical layout is not working yet.
+2. Clone this repository and run the installer:
 
    ```bash
+   git clone https://github.com/criger/zorinos-fisheye-taskbar.git
+   cd zorinos-fisheye-taskbar
    bash scripts/install-local.sh
    ```
 
-4. If the new extension is not discovered, log out and back in. Then enable it:
+3. If GNOME does not discover the newly installed extension immediately, log out and back in. Then enable it:
 
    ```bash
    gnome-extensions enable zorin-fisheye@criger.github.io
    ```
 
-5. Disable only the magnification effect (without removing Zorin Taskbar) with:
+   You can also enable it from Extension Manager once it appears in your installed extensions.
+
+4. To turn off only the magnification effect (without removing Zorin Taskbar), run:
 
    ```bash
    gnome-extensions disable zorin-fisheye@criger.github.io
@@ -88,7 +93,11 @@ Use `bash scripts/install-local.sh` for local iteration. If loading fails, look 
 journalctl --user -b | grep -i 'zorin-fisheye'
 ```
 
-### Manual acceptance tests (not yet performed)
+### Manual testing
+
+**Observed on Zorin OS 18:** fisheye works with the tested bottom-positioned Zorin taskbar layouts, including non-Windows-style layouts. The left-side vertical layout did not magnify icons.
+
+**Additional regression tests still needed:**
 
 - Internal/external displays with different resolutions/scaling.
 - Full-width original taskbar and unchanged normal panel height.
