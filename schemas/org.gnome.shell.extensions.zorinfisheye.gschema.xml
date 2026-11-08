@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.zorinfisheye" path="/org/gnome/shell/extensions/zorinfisheye/">
+    <key name="magnification" type="d">
+      <default>0.75</default>
+      <summary>Maximum additional icon scale</summary>
+      <description>0.75 means the icon can reach 175% of normal size.</description>
+    </key>
+    <key name="influence-radius" type="i">
+      <default>120</default>
+      <summary>Influence radius in logical pixels</summary>
+      <description>How far away the cursor influences adjacent icons.</description>
+    </key>
+  </schema>
+</schemalist>

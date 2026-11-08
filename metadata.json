@@ -1,0 +1,9 @@
+{
+  "uuid": "zorin-fisheye@criger.github.io",
+  "name": "Zorin Taskbar Fisheye",
+  "description": "Fisheye magnification for Zorin's existing Windows-style taskbar",
+  "shell-version": ["46"],
+  "settings-schema": "org.gnome.shell.extensions.zorinfisheye",
+  "url": "https://github.com/criger/zorinos-fisheye-taskbar",
+  "version": 1
+}
