@@ -10,6 +10,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import { magnificationFrame } from './magnification.js';
 import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
+import { highResolutionSize, highResolutionPlacement } from './icon-rendering.js';
 
 const REFRESH_INTERVAL_MS = 700;
 const EDGE_TOLERANCE_PX = 48;
@@ -30,7 +31,11 @@ export default class ZorinFisheyeExtension extends Extension
         this._settings = this.getSettings();
         this._settingsId = this._settings.connect(
             'changed',
-            () => this._renderCurrentPointer());
+            () =>
+            {
+                this._refreshIcons();
+                this._renderCurrentPointer();
+            });
 
         this._stageId = global.stage.connect(
             'captured-event',
@@ -84,7 +89,7 @@ export default class ZorinFisheyeExtension extends Extension
 
         for (const entry of this._entries.values())
         {
-            entry.clone.destroy();
+            entry.overlay.destroy();
         }
 
         this._entries.clear();
@@ -115,28 +120,67 @@ export default class ZorinFisheyeExtension extends Extension
 
                 discovered.set(source, panel);
 
+                const [width, height] = source.get_transformed_size();
+                const maxScale = 1 + this._settings.get_double('magnification');
+                const size = highResolutionSize(
+                    Math.max(width, height, panel.taskbar.iconSize || 1),
+                    maxScale);
                 const existing = this._entries.get(source);
 
                 if (existing)
                 {
                     existing.panel = panel;
+                    if (existing.highResolution && size > existing.textureSize)
+                    {
+                        existing.overlay.set_icon_size(size);
+                        existing.overlay.set_size(size, size);
+                        existing.textureSize = size;
+                    }
                     continue;
                 }
 
-                const clone = new Clutter.Clone(
+                let overlay = null;
+                let highResolution = false;
+                try
                 {
-                    source,
-                    reactive: false,
-                    visible: false,
-                });
+                    // Ask GNOME for a full-resolution app icon, rather than
+                    // enlarge the small rasterized icon already in the taskbar.
+                    overlay = appIcon.app?.create_icon_texture?.(size) ?? null;
+                    highResolution = Boolean(overlay);
+                }
+                catch (error)
+                {
+                    console.warn('[Zorin Fisheye] Cannot create high-res icon:', error);
+                }
 
-                Main.uiGroup.add_child(clone);
+                if (!overlay)
+                {
+                    // Preserve the original clone path as a safe fallback.
+                    overlay = new Clutter.Clone(
+                    {
+                        source,
+                        reactive: false,
+                        visible: false,
+                    });
+                }
+
+                overlay.reactive = false;
+                if (highResolution)
+                {
+                    // Give St.Icon the same logical allocation as its loaded texture.
+                    overlay.set_size(size, size);
+                }
+
+                overlay.hide();
+                Main.uiGroup.add_child(overlay);
 
                 this._entries.set(source,
                 {
                     panel,
                     source,
-                    clone,
+                    overlay,
+                    textureSize: size,
+                    highResolution,
                     originalOpacity: null,
                 });
             }
@@ -147,7 +191,7 @@ export default class ZorinFisheyeExtension extends Extension
             if (!discovered.has(source))
             {
                 hideMagnifiedIcon(entry);
-                entry.clone.destroy();
+                entry.overlay.destroy();
                 this._entries.delete(source);
             }
         }
@@ -248,10 +292,26 @@ export default class ZorinFisheyeExtension extends Extension
                 const pivotX = vertical ? (side === St.Side.RIGHT ? 1 : 0) : 0.5;
                 const pivotY = vertical ? 0.5 : (side === St.Side.TOP ? 0 : 1);
 
-                entry.clone.set_pivot_point(pivotX, pivotY);
-                entry.clone.set_position(x, y);
-                entry.clone.set_size(width, height);
-                entry.clone.set_scale(scale, scale);
+                if (entry.highResolution)
+                {
+                    const placement = highResolutionPlacement(
+                    {
+                        x, y, width, height, scale, pivotX, pivotY,
+                        textureSize: entry.textureSize,
+                    });
+
+                    entry.overlay.set_pivot_point(0, 0);
+                    entry.overlay.set_position(placement.x, placement.y);
+                    entry.overlay.set_scale(placement.scaleX, placement.scaleY);
+                }
+                else
+                {
+                    entry.overlay.set_pivot_point(pivotX, pivotY);
+                    entry.overlay.set_position(x, y);
+                    entry.overlay.set_size(width, height);
+                    entry.overlay.set_scale(scale, scale);
+                }
+
                 showMagnifiedIcon(entry);
             });
         }

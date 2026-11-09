@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Cristhian Gertner
 
 /**
- * GNOME Shell paints a Clutter.Clone with its own paint opacity, even when
+ * GNOME Shell paints a separate overlay with its own paint opacity, even when
  * the source has zero opacity. Keep the source actor visible/mapped and
  * interactive so Zorin retains click, drag/drop and tooltip handling.
  */
@@ -11,7 +11,7 @@ export function showMagnifiedIcon(entry)
     if (entry.originalOpacity === null)
     {
         entry.originalOpacity = entry.source.get_opacity();
-        entry.clone.show();
+        entry.overlay.show();
         entry.source.set_opacity(0);
     }
 }
@@ -25,5 +25,5 @@ export function hideMagnifiedIcon(entry)
         entry.originalOpacity = null;
     }
 
-    entry.clone.hide();
+    entry.overlay.hide();
 }

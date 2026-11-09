@@ -18,12 +18,12 @@ function createEntry(initialOpacity = 255)
             operations.push(`source opacity ${value}`);
         },
     };
-    const clone = {
+    const overlay = {
         visible: false,
         show() { this.visible = true; operations.push('clone show'); },
         hide() { this.visible = false; operations.push('clone hide'); },
     };
-    return { entry: { source, clone, originalOpacity: null }, operations };
+    return { entry: { source, overlay, originalOpacity: null }, operations };
 }
 
 test('hover hides only the original paint, leaving input actor active', () =>
@@ -33,7 +33,7 @@ test('hover hides only the original paint, leaving input actor active', () =>
     assert.equal(entry.source.opacity, 0);
     assert.equal(entry.source.visible, true);
     assert.equal(entry.source.reactive, true);
-    assert.equal(entry.clone.visible, true);
+    assert.equal(entry.overlay.visible, true);
     assert.deepEqual(operations, ['clone show', 'source opacity 0']);
 });
 
@@ -43,7 +43,7 @@ test('hover exit restores existing opacity and hides clone', () =>
     showMagnifiedIcon(entry);
     hideMagnifiedIcon(entry);
     assert.equal(entry.source.opacity, 137);
-    assert.equal(entry.clone.visible, false);
+    assert.equal(entry.overlay.visible, false);
     assert.equal(entry.originalOpacity, null);
     assert.deepEqual(operations, [
         'clone show', 'source opacity 0', 'source opacity 137', 'clone hide',
@@ -69,7 +69,7 @@ test('repeated hide is safe and keeps original opacity', () =>
     hideMagnifiedIcon(entry);
     hideMagnifiedIcon(entry);
     assert.equal(entry.source.opacity, 210);
-    assert.equal(entry.clone.visible, false);
+    assert.equal(entry.overlay.visible, false);
 });
 
 test('preexisting zero opacity remains zero after restoration', () =>
