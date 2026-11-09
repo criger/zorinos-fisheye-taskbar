@@ -9,6 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import { magnificationFrame } from './magnification.js';
+import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
 
 const REFRESH_INTERVAL_MS = 700;
 const EDGE_TOLERANCE_PX = 48;
@@ -78,6 +79,9 @@ export default class ZorinFisheyeExtension extends Extension
             this._settingsId = 0;
         }
 
+        // Restore the native icons before removing our presentation clones.
+        this._hideAll();
+
         for (const entry of this._entries.values())
         {
             entry.clone.destroy();
@@ -133,6 +137,7 @@ export default class ZorinFisheyeExtension extends Extension
                     panel,
                     source,
                     clone,
+                    originalOpacity: null,
                 });
             }
         }
@@ -141,6 +146,7 @@ export default class ZorinFisheyeExtension extends Extension
         {
             if (!discovered.has(source))
             {
+                hideMagnifiedIcon(entry);
                 entry.clone.destroy();
                 this._entries.delete(source);
             }
@@ -196,7 +202,7 @@ export default class ZorinFisheyeExtension extends Extension
             {
                 if (!entry.source.get_stage())
                 {
-                    entry.clone.hide();
+                    hideMagnifiedIcon(entry);
                     continue;
                 }
 
@@ -205,7 +211,7 @@ export default class ZorinFisheyeExtension extends Extension
 
                 if (width <= 0 || height <= 0)
                 {
-                    entry.clone.hide();
+                    hideMagnifiedIcon(entry);
                     continue;
                 }
 
@@ -234,7 +240,7 @@ export default class ZorinFisheyeExtension extends Extension
 
                 if (scale < MIN_VISIBLE_MAGNIFICATION)
                 {
-                    entry.clone.hide();
+                    hideMagnifiedIcon(entry);
                     return;
                 }
 
@@ -246,7 +252,7 @@ export default class ZorinFisheyeExtension extends Extension
                 entry.clone.set_position(x, y);
                 entry.clone.set_size(width, height);
                 entry.clone.set_scale(scale, scale);
-                entry.clone.show();
+                showMagnifiedIcon(entry);
             });
         }
     }
@@ -255,7 +261,7 @@ export default class ZorinFisheyeExtension extends Extension
     {
         for (const entry of entries)
         {
-            entry.clone.hide();
+            hideMagnifiedIcon(entry);
         }
     }
 

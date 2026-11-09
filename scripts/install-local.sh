@@ -16,6 +16,7 @@ mkdir -p "${TARGET}/schemas"
 install -m 644 "${ROOT}/metadata.json" "${TARGET}/"
 install -m 644 "${ROOT}/extension.js" "${TARGET}/"
 install -m 644 "${ROOT}/magnification.js" "${TARGET}/"
+install -m 644 "${ROOT}/icon-visibility.js" "${TARGET}/"
 install -m 644 "${ROOT}/schemas/org.gnome.shell.extensions.zorinfisheye.gschema.xml" "${TARGET}/schemas/"
 glib-compile-schemas --strict "${TARGET}/schemas"
 
