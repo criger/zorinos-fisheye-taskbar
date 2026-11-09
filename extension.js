@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Cristhian Gertner
 
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -16,6 +17,9 @@ import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } 
 import { clonePlacement } from './icon-geometry.js';
 import { pixelPerfectScale, findOriginalIconContent } from './pixel-scaling.js';
 import { tooltipPosition } from './tooltip-position.js';
+import {
+    normalizeTaskbarApps, iconOverrideFor, appRowsToVariant,
+} from './icon-overrides.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
 const CLICK_WINDOW_US = 2_000_000;
@@ -33,11 +37,17 @@ export default class ZorinFisheyeExtension extends Extension
         this._panels = new Map();
         this._signals = [];
         this._refreshIdleId = 0;
+        this._lastTaskbarSnapshot = '';
         this._manager = null;
         this._managerSignalId = 0;
         this._settings = this.getSettings();
-        this._connect(this._settings, 'changed', () =>
+        this._connect(this._settings, 'changed', (_settings, key) =>
         {
+            // A live catalog update is not a rendering preference change.
+            // Prevent a Shell -> prefs GSettings write from recursing.
+            if (key === 'taskbar-apps')
+                return;
+
             if (!this._settings.get_boolean('bounce-enabled'))
             {
                 for (const entry of this._entries.values())
@@ -103,6 +113,7 @@ export default class ZorinFisheyeExtension extends Extension
         for (const entry of this._entries.values())
         {
             this._unwatchIcon(entry);
+            this._restoreNativeIcon(entry);
             entry.overlay.destroy();
         }
 
@@ -114,6 +125,8 @@ export default class ZorinFisheyeExtension extends Extension
 
         this._orphanBounces.clear();
         this._entries.clear();
+        this._settings.set_value('taskbar-apps',
+            new GLib.Variant('a(sssi)', []));
         this._entries = null;
         this._panels = null;
         this._settings = null;
@@ -262,15 +275,148 @@ export default class ZorinFisheyeExtension extends Extension
         }
     }
 
+    _customIconPath(appId)
+    {
+        const paths = this._settings.get_value(
+            'icon-overrides').deep_unpack();
+        const selected = iconOverrideFor(appId, paths);
+
+        // File IO only on icon lifecycle/settings refresh, NEVER on hover.
+        return selected && GLib.file_test(selected,
+            GLib.FileTest.IS_REGULAR) ? selected : '';
+    }
+
+    _restoreNativeIcon(entry)
+    {
+        const icon = entry.overriddenNativeIcon;
+
+        if (!icon)
+            return;
+
+        try
+        {
+            if (icon.gicon === entry.customNativeGicon)
+            {
+                icon.gicon = entry.nativeOriginalGicon ??
+                    entry.appIcon?.app?.get_icon?.() ?? null;
+            }
+        }
+        catch (error)
+        {
+            // Zorin might have destroyed or recreated an icon actor.
+        }
+
+        entry.overriddenNativeIcon = null;
+        entry.customNativeGicon = null;
+        entry.nativeOriginalGicon = null;
+        entry.nativeIconPath = '';
+    }
+
+    _syncNativeIcon(entry, path)
+    {
+        const icon = entry.source.get_child?.() ?? entry.source.child;
+
+        if (entry.overriddenNativeIcon &&
+            entry.overriddenNativeIcon !== icon)
+        {
+            // A native icon was replaced by Zorin (size/theme change).
+            // The new actor has its own original gicon.
+            this._restoreNativeIcon(entry);
+        }
+
+        if (!path)
+        {
+            if (!entry.overriddenNativeIcon)
+                return false;
+
+            this._restoreNativeIcon(entry);
+            return true;
+        }
+
+        if (!(icon instanceof St.Icon))
+        {
+            // Custom GJS actors may not be St.Icon and cannot be replaced
+            // this way. Their hover overlay still uses the custom path.
+            return false;
+        }
+
+        if (entry.overriddenNativeIcon === icon &&
+            entry.nativeIconPath === path &&
+            icon.gicon === entry.customNativeGicon)
+        {
+            return false;
+        }
+
+        if (entry.overriddenNativeIcon !== icon)
+        {
+            entry.nativeOriginalGicon = icon.gicon;
+            entry.overriddenNativeIcon = icon;
+        }
+        else if (icon.gicon !== entry.customNativeGicon)
+        {
+            // A bound Shell.App.icon changed while our override was active.
+            // Keep the new default icon for a subsequent reset/disable.
+            entry.nativeOriginalGicon = icon.gicon;
+        }
+
+        const fileIcon = new Gio.FileIcon(
+        {
+            file: Gio.File.new_for_path(path),
+        });
+
+        icon.gicon = fileIcon;
+        entry.customNativeGicon = fileIcon;
+        entry.nativeIconPath = path;
+
+        return true;
+    }
+
+    _publishTaskbarApps()
+    {
+        const apps = [];
+        for (const entry of this._entries.values())
+        {
+            const app = entry.appIcon?.app;
+            const id = app?.get_id?.();
+
+            if (!id)
+                continue;
+
+            const icon = app.get_icon?.() ??
+                app.get_app_info?.()?.get_icon?.() ?? null;
+
+            apps.push({
+                id,
+                name: app.get_name?.() ?? id,
+                icon: icon?.to_string?.() ?? '',
+                size: Math.max(1, Math.round(
+                    entry.panel.taskbar?.iconSize ?? 32)),
+            });
+        }
+
+        const rows = appRowsToVariant(normalizeTaskbarApps(apps));
+        const serialized = JSON.stringify(rows);
+
+        if (serialized === this._lastTaskbarSnapshot)
+            return;
+
+        this._lastTaskbarSnapshot = serialized;
+        this._settings.set_value('taskbar-apps',
+            new GLib.Variant('a(sssi)', rows));
+    }
+
     _makeOverlay(appIcon, source, panel)
     {
+        const overridePath = this._customIconPath(appIcon.app?.get_id?.());
         const pixelPerfect = this._settings.get_boolean('pixel-perfect-icons');
         const preferHighResolution = !pixelPerfect && shouldUseHighResolution(
             appIcon.app?.get_id?.(),
             this._settings.get_boolean('high-resolution-icons'),
             this._settings.get_string('native-icon-apps'));
-        const renderPreference = pixelPerfect ? 'pixel-perfect'
-            : preferHighResolution ? 'hd' : 'original';
+        const renderPreference = pixelPerfect
+            ? 'pixel-perfect:' + overridePath
+            : overridePath ? 'file:' + overridePath
+                : preferHighResolution ? 'hd' : 'original';
         let overlay = null;
         let highResolution = false;
         let pixelContent = false;
@@ -297,6 +443,26 @@ export default class ZorinFisheyeExtension extends Extension
                     Clutter.ScalingFilter.NEAREST);
                 pixelContent = true;
             }
+        }
+
+        if (!overlay && overridePath && !pixelPerfect &&
+            source.get_stage())
+        {
+            const [width, height] = source.get_transformed_size();
+            textureSize = highResolutionSize(
+                Math.max(width, height, panel.taskbar.iconSize || 1),
+                1 + this._settings.get_double('magnification'));
+            overlay = new St.Icon(
+            {
+                gicon: new Gio.FileIcon(
+                {
+                    file: Gio.File.new_for_path(overridePath),
+                }),
+                icon_size: textureSize,
+                reactive: false,
+                visible: false,
+            });
+            highResolution = true;
         }
 
         if (!overlay && preferHighResolution && source.get_stage())
@@ -390,7 +556,12 @@ export default class ZorinFisheyeExtension extends Extension
                 {
                     existing.panel = panel;
 
-                    if (existing.appIcon !== appIcon)
+                    const overridePath = this._customIconPath(
+                        appIcon.app?.get_id?.());
+                    const nativeChanged = this._syncNativeIcon(
+                        existing, overridePath);
+
+                    if (existing.appIcon !== appIcon || nativeChanged)
                     {
                         this._unwatchIcon(existing);
                         existing.appIcon = appIcon;
@@ -403,8 +574,10 @@ export default class ZorinFisheyeExtension extends Extension
                         appIcon.app?.get_id?.(),
                         this._settings.get_boolean('high-resolution-icons'),
                         this._settings.get_string('native-icon-apps'));
-                    const renderPreference = pixelPerfect ? 'pixel-perfect'
-                        : preferHD ? 'hd' : 'original';
+                    const renderPreference = pixelPerfect
+                        ? 'pixel-perfect:' + overridePath
+                        : overridePath ? 'file:' + overridePath
+                            : preferHD ? 'hd' : 'original';
 
                     // If a texture becomes available later, replace the
                     // experimental clone fallback with true pixel content.
@@ -448,10 +621,12 @@ export default class ZorinFisheyeExtension extends Extension
                 const entry =
                 {
                     panel, appIcon, source,
-                    ...this._makeOverlay(appIcon, source, panel),
                     originalOpacity: null,
                     bouncing: false,
                 };
+                this._syncNativeIcon(entry,
+                    this._customIconPath(appIcon.app?.get_id?.()));
+                Object.assign(entry, this._makeOverlay(appIcon, source, panel));
 
                 this._entries.set(source, entry);
                 this._watchIcon(entry);
@@ -463,6 +638,7 @@ export default class ZorinFisheyeExtension extends Extension
             if (!discovered.has(source))
             {
                 this._unwatchIcon(entry);
+                this._restoreNativeIcon(entry);
 
                 if ((entry.bouncing || entry.bouncePending) &&
                     (entry.highResolution || entry.pixelContent))
@@ -497,6 +673,8 @@ export default class ZorinFisheyeExtension extends Extension
                 this._entries.delete(source);
             }
         }
+
+        this._publishTaskbarApps();
     }
 
     _insidePanel(panel, x, y)
@@ -784,6 +962,20 @@ export default class ZorinFisheyeExtension extends Extension
     {
         const appIcon = entry.appIcon;
         entry.iconSignals = [];
+        this._connect(entry.source, 'child-added',
+            () => this._scheduleRefresh(), entry.iconSignals);
+        this._connect(entry.source, 'child-removed',
+            () => this._scheduleRefresh(), entry.iconSignals);
+
+        const nativeIcon = entry.source.get_child?.() ??
+            entry.source.child;
+
+        if (nativeIcon)
+        {
+            this._connect(nativeIcon, 'notify::gicon',
+                () => this._scheduleRefresh(), entry.iconSignals);
+        }
+
         entry.tooltipRaised = false;
         entry.tooltipIdleId = 0;
 

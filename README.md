@@ -88,6 +88,42 @@ Log out and back in to reload GNOME Shell's extension code, then enable it using
 
 **Wayland:** Do not restart GNOME Shell with `Alt+F2 → r`. Log out and in instead.
 
+## Per-app icon selection (new experimental UI)
+
+**Extension Manager → Settings → Taskbar application icons** displays the actual
+pinned/running application icons in Zorin Taskbar as a two-column list:
+
+| Application name | Icon path |
+| --- | --- |
+| Name from the taskbar application | Current icon file path (when resolvable), editable field, **…** browse button and **Reset** button |
+
+Selecting a local image file updates both the **normal taskbar icon** and its
+**enlarged fisheye rendering**, without changing the `.desktop` file or replacing
+the taskbar. Supported image types depend on the local GTK/GNOME installation;
+PNG, SVG, WebP, JPEG and ICO are accepted when supported. You can paste an
+absolute path into the field and press Enter. Reset removes the override.
+
+**Important:** A small or non-square source image can look distorted/blurry when
+enlarged. Prefer vector SVG or square PNG at least 128×128 (ideally 256×256).
+
+The visible list is published by the running GNOME Shell extension through a
+compact, event-driven GSettings snapshot. The preferences window runs in a
+different process, so it does not introspect GNOME Shell itself. A changed
+taskbar icon list automatically refreshes the table. Overridden icon paths are
+saved by **desktop application ID**, and remain configured if an app is
+temporarily absent from the taskbar.
+
+Some themed, embedded, symbolic or generated icons have **no normal filesystem
+path**. In that case the field is empty with a placeholder, and the user can
+still browse for a replacement. GTK's themed-icon lookup chooses a path at
+the app's nominal taskbar size; the actual texture chosen by GNOME Shell can
+differ by screen scale or icon theme. Existing `native-icon-apps` exceptions
+continue to work for applications without a custom icon path.
+
+**Scope:** Overrides affect icons while Zorin Taskbar Fisheye is enabled.
+Disabling the extension restores the original icons. This does not globally
+change icons in menus, other docks or the applications' own desktop files.
+
 ## Configuration
 
 Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** (the gear icon) to adjust:

@@ -21,6 +21,16 @@
       <summary>Application IDs that should keep their original Zorin icon</summary>
       <description>Comma-separated desktop IDs. Only listed apps use the original icon rather than a different high-resolution PNG variant.</description>
     </key>
+    <key name="icon-overrides" type="a{ss}">
+      <default>@a{ss} {}</default>
+      <summary>Per-application icon image paths</summary>
+      <description>Maps application desktop IDs to absolute local image file paths; an invalid or missing file falls back to the app's default icon.</description>
+    </key>
+    <key name="taskbar-apps" type="a(sssi)">
+      <default>[]</default>
+      <summary>Live taskbar icon catalog for the separate preferences process</summary>
+      <description>Runtime snapshot of desktop ID, application name, serialized GIcon, and native icon size; maintained only when the taskbar icon list changes.</description>
+    </key>
     <key name="influence-radius" type="i">
       <default>120</default>
       <summary>Influence radius in logical pixels</summary>

@@ -6,6 +6,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { addTaskbarIconTable } from './icon-preferences.js';
 
 export default class ZorinFisheyePreferences extends ExtensionPreferences
 {
@@ -61,14 +62,6 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         });
         magnification.add(pixelPerfectRow);
         settings.bind('pixel-perfect-icons', pixelPerfectRow, 'active',
-            Gio.SettingsBindFlags.DEFAULT);
-
-        const nativeAppsRow = new Adw.EntryRow(
-        {
-            title: 'Apps keeping original icons (.desktop IDs)',
-        });
-        magnification.add(nativeAppsRow);
-        settings.bind('native-icon-apps', nativeAppsRow, 'text',
             Gio.SettingsBindFlags.DEFAULT);
 
         const radiusRow = new Adw.SpinRow(
@@ -128,5 +121,7 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
             settings.set_int('bounce-height',
                 Math.round(heightRow.get_value()));
         });
+
+        addTaskbarIconTable(page, window, settings);
     }
 }

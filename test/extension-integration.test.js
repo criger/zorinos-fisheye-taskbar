@@ -83,6 +83,27 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         destroy() { this.destroyed = true; }
     }
 
+    class IconActor extends Clone
+    {
+        constructor({ gicon = null, icon_size = 32, visible = true } = {})
+        {
+            super({ source: null });
+            this.gicon = gicon;
+            this.visible = visible;
+            this.set_size(icon_size, icon_size);
+        }
+    }
+
+    class FileIcon
+    {
+        constructor({ file }) { this.file = file; }
+    }
+
+    const Gio = {
+        File: { new_for_path: path => ({ path }) },
+        FileIcon,
+    };
+
     const stage = new Emitter();
     const overview = new Emitter();
     const layoutManager = new Emitter();
@@ -93,6 +114,11 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         state: 0,
         get_state() { return this.state; },
         get_id() { return 'chatgpt.desktop'; },
+        get_name() { return 'ChatGPT'; },
+        get_icon()
+        {
+            return { to_string: () => 'chrome-chatgpt-app' };
+        },
         create_icon_texture(size)
         {
             const actor = new Clone({ source: null });
@@ -105,7 +131,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const originalPixels = { type: 'already-loaded-image', background: 'white' };
     const textureChild = new Actor(90, 995);
     textureChild.get_content = () => originalPixels;
-    const iconChild = new Actor(90, 995);
+    const defaultGicon = { name: 'chrome-chatgpt-app' };
+    const iconChild = new IconActor({ gicon: defaultGicon });
     iconChild.get_children = () => [textureChild];
     source.get_child = () => iconChild;
     const icon = new Actor(87, 992, 40, 40);
@@ -137,7 +164,16 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
 
     let pointer = [400, 200];
     const idle = [];
+    const filesPresent = new Set(['/tmp/new-chatgpt-icon.svg']);
+    class Variant
+    {
+        constructor(type, value) { this.type = type; this.value = value; }
+        deep_unpack() { return this.value; }
+    }
     const GLib = {
+        Variant,
+        FileTest: { IS_REGULAR: 1 },
+        file_test: path => filesPresent.has(path),
         PRIORITY_DEFAULT_IDLE: 0,
         SOURCE_REMOVE: false,
         Source: { remove() {} },
@@ -165,7 +201,10 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         AppSystem: { get_default: () => appSystem },
         AppState: { STOPPED: 0, STARTING: 1, RUNNING: 2 },
     };
-    const St = { Side: { TOP: 0, BOTTOM: 1, LEFT: 2, RIGHT: 3 } };
+    const St = {
+        Icon: IconActor,
+        Side: { TOP: 0, BOTTOM: 1, LEFT: 2, RIGHT: 3 },
+    };
     const Main = {
         layoutManager,
         overview,
@@ -188,13 +227,36 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         key === 'high-resolution-icons' ? useHD :
         key === 'pixel-perfect-icons' ? pixelPerfect : true;
     settings.get_string = () => nativeIconApps;
+    let iconOverrides = {};
+    let taskbarApps = [];
+    settings.get_value = key =>
+    {
+        if (key === 'icon-overrides')
+            return new GLib.Variant('a{ss}', iconOverrides);
+        if (key === 'taskbar-apps')
+            return new GLib.Variant('a(sssi)', taskbarApps);
+        throw new Error('Unexpected GSettings key: ' + key);
+    };
+    settings.set_value = (key, variant) =>
+    {
+        assert.ok(variant instanceof GLib.Variant);
+        if (key === 'icon-overrides')
+            iconOverrides = variant.deep_unpack();
+        else if (key === 'taskbar-apps')
+            taskbarApps = variant.deep_unpack();
+        else
+            throw new Error('Unexpected GSettings write: ' + key);
+
+        settings.emit('changed', key);
+    };
+
     class Extension
     {
         getSettings() { return settings; }
     }
 
     const raw = readFileSync(new URL('../extension.js', import.meta.url), 'utf8');
-    const sourceCode = raw.replace(/^import .*;\s*$/gm, '')
+    const sourceCode = raw.replace(/^[ \t]*import[\s\S]*?from\s+['"][^'"]+['"];/gm, '')
         .replace(/^export default /gm, '');
     const magnification = readFileSync(
         new URL('../magnification.js', import.meta.url), 'utf8')
@@ -217,30 +279,39 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const tooltipPositionSource = readFileSync(
         new URL('../tooltip-position.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const overridesSource = readFileSync(
+        new URL('../icon-overrides.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
 
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
         launchBounce + '\n' + iconGeometry + '\n' +
         iconRendering + '\n' + pixelScaling + '\n' +
-        tooltipPositionSource + '\nreturn {' +
+        tooltipPositionSource + '\n' + overridesSource + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
         'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
         'clonePlacement, highResolutionSize, highResolutionPlacement, ' +
         'shouldUseHighResolution, pixelPerfectScale, ' +
-        'findOriginalIconContent, tooltipPosition};')();
+        'findOriginalIconContent, tooltipPosition, ' +
+        'normalizeTaskbarApps, iconOverrideFor, appRowsToVariant};')();
 
     const ExtensionType = new Function(
-        'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
+        'Clutter', 'Gio', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
         'console', ...Object.keys(functions),
         sourceCode + '\nreturn ZorinFisheyeExtension;')(
-        Clutter, GLib, Shell, St, Main, Extension, shellGlobal,
+        Clutter, Gio, GLib, Shell, St, Main, Extension, shellGlobal,
         { log() {}, warn() {} },
         ...Object.values(functions));
 
     const extension = new ExtensionType();
     extension.enable();
     assert.equal(extension._entries.size, 1);
-    assert.equal(idle.length, 0);
+    assert.equal(taskbarApps.length, 1, 'taskbar apps published from Shell');
+    assert.deepEqual(taskbarApps[0], [
+        'chatgpt.desktop', 'ChatGPT', 'chrome-chatgpt-app', 32,
+    ]);
+    assert.equal(idle.length, 0,
+        'publishing the taskbar app catalog cannot schedule icon refresh');
 
     pointer = [100, 1010];
     icon.hover = true;
@@ -305,6 +376,29 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     settings.emit('changed');
     assert.equal(extension._entries.get(source).highResolution, true);
 
+    // An explicit absolute path changes the native AND enlarged icons.
+    const originalHD = extension._entries.get(source).overlay;
+    iconOverrides = {
+        'chatgpt.desktop': '/tmp/new-chatgpt-icon.svg',
+    };
+    settings.emit('changed', 'icon-overrides');
+    assert.ok(iconChild.gicon instanceof FileIcon,
+        'native Zorin St.Icon receives custom Gio.FileIcon');
+    assert.equal(iconChild.gicon.file.path, '/tmp/new-chatgpt-icon.svg');
+    const replacement = extension._entries.get(source);
+    assert.ok(replacement.highResolution);
+    assert.ok(replacement.overlay instanceof St.Icon,
+        'magnified icon uses the same user-selected icon');
+    assert.equal(replacement.overlay.gicon.file.path,
+        '/tmp/new-chatgpt-icon.svg');
+    assert.equal(originalHD.destroyed, true);
+
+    // The original icon is restored when its override is cleared.
+    iconOverrides = {};
+    settings.emit('changed', 'icon-overrides');
+    assert.equal(iconChild.gicon, defaultGicon);
+    assert.equal(extension._entries.get(source).renderPreference, 'hd');
+
     // Nearest-neighbor uses the exact existing icon and strict 1x/2x scaling.
     pixelPerfect = true;
     settings.emit('changed');
@@ -354,7 +448,13 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(source.opacity, 255, 'panel leave must restore without timer');
 
     const second = new Actor(140, 995);
-    const secondApp = { state: 0, get_state() { return this.state; } };
+    const secondApp = {
+        state: 0,
+        get_state() { return this.state; },
+        get_id() { return 'firefox.desktop'; },
+        get_name() { return 'Firefox'; },
+        get_icon() { return { to_string: () => 'firefox' }; },
+    };
     const secondIcon = new Actor(136, 992, 40, 40);
     secondIcon.app = secondApp;
     secondIcon.icon = { _iconBin: second };
@@ -363,6 +463,9 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(idle.length, 1);
     idle.shift()();
     assert.equal(extension._entries.size, 2);
+    assert.equal(taskbarApps.length, 2,
+        'new running app appears in the preferences catalog');
+    assert.equal(taskbarApps[1][1], 'Firefox');
 
     const press = {
         get_button: () => 1,
@@ -446,6 +549,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     box.emit('child-removed', secondIcon);
     idle.shift()();
     assert.equal(extension._entries.size, 1);
+    assert.equal(taskbarApps.length, 1,
+        'closing an application removes it from the live catalog');
 
     // A pinned launcher can be removed while the deferred bounce waits.
     // A self-contained HD overlay must survive until its two hops finish.
@@ -469,4 +574,6 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(source.opacity, 255);
 
     extension.disable();
+    assert.deepEqual(taskbarApps, [],
+        'disabling extension clears stale taskbar catalog');
 });
