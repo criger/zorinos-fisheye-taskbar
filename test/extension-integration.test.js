@@ -110,6 +110,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const appSystem = new Emitter();
     const box = new Emitter();
     const panelActor = new Actor(0, 980, 800, 65);
+    let textureAvailable = true;
     const app = {
         state: 0,
         get_state() { return this.state; },
@@ -121,13 +122,20 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         },
         create_icon_texture(size)
         {
+            if (!textureAvailable)
+                return null;
+
             const actor = new Clone({ source: null });
             actor.set_size(size, size);
             actor.hd = true;
             return actor;
         },
     };
+    // A new taskbar icon can be discovered BEFORE it has a stage.
+    // HD rendering must not stay a blurry Clone until settings are toggled.
+    let stageAttached = false;
     const source = new Actor(90, 995);
+    source.get_stage = () => stageAttached ? {} : null;
     const originalPixels = { type: 'already-loaded-image', background: 'white' };
     const textureChild = new Actor(90, 995);
     textureChild.get_content = () => originalPixels;
@@ -306,6 +314,16 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const extension = new ExtensionType();
     extension.enable();
     assert.equal(extension._entries.size, 1);
+    assert.equal(extension._entries.get(source).highResolution, true,
+        'HD icon must be created before source actor is mapped');
+    assert.ok(extension._entries.get(source).textureSize >= 64,
+        'unallocated icons should still receive a real HD texture');
+    stageAttached = true;
+    source.emit('notify::mapped');
+    assert.equal(idle.length, 1,
+        'newly mapped icon schedules exactly one event-driven refresh');
+    idle.shift()();
+
     assert.equal(taskbarApps.length, 1, 'taskbar apps published from Shell');
     assert.deepEqual(taskbarApps[0], [
         'chatgpt.desktop', 'ChatGPT', 'chrome-chatgpt-app', 32,
@@ -367,6 +385,22 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     settings.emit('changed');
     assert.equal(extension._entries.get(source).highResolution, true);
     assert.equal(extension._entries.get(source).overlay.hd, true);
+
+    // A temporarily unavailable HD texture can upgrade automatically as
+    // soon as the taskbar actor is refreshed, without touching the switch.
+    useHD = false;
+    settings.emit('changed', 'high-resolution-icons');
+    textureAvailable = false;
+    useHD = true;
+    settings.emit('changed', 'high-resolution-icons');
+    assert.equal(extension._entries.get(source).highResolution, false,
+        'fallback clone when app texture is temporarily unavailable');
+    textureAvailable = true;
+    source.emit('notify::mapped');
+    assert.equal(idle.length, 1);
+    idle.shift()();
+    assert.equal(extension._entries.get(source).highResolution, true,
+        'refresh should upgrade fallback to HD without settings toggle');
 
     // Per-app exception preserves native artwork on this one Chrome app.
     nativeIconApps = 'chatgpt.desktop';

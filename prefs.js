@@ -122,6 +122,43 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
                 Math.round(heightRow.get_value()));
         });
 
-        addTaskbarIconTable(page, window, settings);
+        // The normal Adw.PreferencesPage has a ~600px Clamp, even if
+        // PreferencesWindow is maximized. Keep controls compact, but give
+        // the file-path table its own wider tab.
+        const iconsPage = new Adw.PreferencesPage(
+        {
+            title: 'Icons',
+            icon_name: 'applications-graphics-symbolic',
+        });
+        window.add(iconsPage);
+
+        const widen = (widget) =>
+        {
+            if (!widget)
+                return false;
+
+            if (widget instanceof Adw.Clamp)
+            {
+                widget.set_maximum_size(1040);
+                widget.set_tightening_threshold(1140);
+                return true;
+            }
+
+            for (let child = widget.get_first_child?.(); child;
+                child = child.get_next_sibling?.())
+            {
+                if (widen(child))
+                    return true;
+            }
+
+            return false;
+        };
+
+        // AdwPreferencesPage's internal GtkScrolledWindow -> viewport ->
+        // Adw.Clamp exists in libadwaita's public layout; do not alter
+        // the clamp belonging to the regular Fisheye settings page.
+        widen(iconsPage);
+        iconsPage.connect('map', () => widen(iconsPage));
+        addTaskbarIconTable(iconsPage, window, settings);
     }
 }

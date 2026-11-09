@@ -90,6 +90,30 @@ Log out and back in to reload GNOME Shell's extension code, then enable it using
 
 ## Per-app icon selection (new experimental UI)
 
+The preferences have two tabs: **Fisheye** for normal settings, and a
+separate **Icons** tab with more horizontal and vertical space. We widen the
+Icons page's libadwaita clamp without affecting the compact Fisheye page.
+
+Full icon paths are **condensed** in each row, but clicking the path displays
+the complete path in an editable field. Press **Enter** to save or **Escape**
+to cancel; hovering over the path shows the full text in a tooltip. The
+file-picker (**…**) and reset buttons remain alongside each icon.
+
+A permanently visible vertical scrollbar and conditional
+**↑ More applications above / ↓ More applications below** controls make
+additional rows discoverable. These indicators reflect the actual GTK
+scroll adjustment; the view preserves its position after an icon change.
+The icon table has a substantially taller viewport instead of the
+previous 180-pixel area.
+
+**Initial HD sharpness fix:** high-resolution icon textures are prepared
+using native icon dimensions (with a safe 32-pixel fallback) even when
+the actor has not yet joined the GNOME stage. A late-mapped icon
+automatically retries an unavailable HD texture through mapped/child
+events. HD remains enabled by default; users no longer need to toggle
+it to replace an initial blurry clone when normal icons are available.
+
+
 **Extension Manager → Settings → Taskbar application icons** displays the actual
 pinned/running application icons in Zorin Taskbar as a two-column list:
 

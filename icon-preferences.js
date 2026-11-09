@@ -11,6 +11,7 @@ import Pango from 'gi://Pango';
 import {
     appRowsFromVariant, iconOverrideFor,
 } from './icon-overrides.js';
+import { condensedIconPath, scrollArrowVisibility } from './icon-table-layout.js';
 
 // The preferences UI runs OUTSIDE GNOME Shell. GSettings supplies the
 // extension's event-driven snapshot of actual visible taskbar apps.
@@ -111,6 +112,7 @@ export function addTaskbarIconTable(page, window, settings)
         orientation: Gtk.Orientation.VERTICAL,
         spacing: 10,
         hexpand: true,
+        vexpand: true,
     });
     group.add(content);
 
@@ -125,25 +127,73 @@ export function addTaskbarIconTable(page, window, settings)
     });
     content.append(warning);
 
-    const scroll = new Gtk.ScrolledWindow(
-    {
-        hscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
-        vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
-        min_content_height: 180,
-        max_content_height: 420,
-        hexpand: true,
+    const headers = new Gtk.Box({
+        orientation: Gtk.Orientation.HORIZONTAL, spacing: 12,
+        hexpand: true, margin_top: 10, margin_start: 6,
+    });
+    headers.append(new Gtk.Label({
+        label: 'Application name', xalign: 0,
+        width_request: 230, css_classes: ['heading'],
+    }));
+    headers.append(new Gtk.Label({
+        label: 'Icon path — click to view or edit full path',
+        xalign: 0, hexpand: true, css_classes: ['heading'],
+    }));
+    content.append(headers);
+
+    const upSpace = new Gtk.Box({
+        height_request: 30, halign: Gtk.Align.CENTER,
+    });
+    const upButton = new Gtk.Button({
+        label: '↑ More applications above', visible: false,
+    });
+    upSpace.append(upButton);
+    content.append(upSpace);
+
+    const scroll = new Gtk.ScrolledWindow({
+        hscrollbar_policy: Gtk.PolicyType.NEVER,
+        vscrollbar_policy: Gtk.PolicyType.ALWAYS,
+        overlay_scrolling: false,
+        propagate_natural_height: true,
+        min_content_height: 390,
+        max_content_height: 640,
+        hexpand: true, vexpand: true,
     });
     content.append(scroll);
-
-    const grid = new Gtk.Grid(
-    {
-        row_spacing: 8,
-        column_spacing: 12,
+    const grid = new Gtk.Grid({
+        row_spacing: 8, column_spacing: 12,
         hexpand: true,
-        margin_top: 8,
-        margin_bottom: 8,
+        margin_top: 8, margin_bottom: 8,
+        margin_start: 6, margin_end: 6,
     });
     scroll.set_child(grid);
+
+    const downSpace = new Gtk.Box({
+        height_request: 30, halign: Gtk.Align.CENTER,
+    });
+    const downButton = new Gtk.Button({
+        label: '↓ More applications below', visible: false,
+    });
+    downSpace.append(downButton);
+    content.append(downSpace);
+
+    const adjustment = scroll.get_vadjustment();
+    const updateArrows = () => {
+        const { up, down } = scrollArrowVisibility(
+            adjustment.get_value(), adjustment.get_lower(),
+            adjustment.get_upper(), adjustment.get_page_size());
+        upButton.set_visible(up);
+        downButton.set_visible(down);
+    };
+    const moveRows = direction => {
+        const distance = Math.max(70, adjustment.get_page_size() * 0.75);
+        adjustment.set_value(adjustment.get_value() + direction * distance);
+    };
+    upButton.connect('clicked', () => moveRows(-1));
+    downButton.connect('clicked', () => moveRows(1));
+    adjustment.connect('changed', updateArrows);
+    adjustment.connect('value-changed', updateArrows);
+    scroll.connect('map', updateArrows);
 
     const status = new Gtk.Label(
     {
@@ -243,29 +293,15 @@ export function addTaskbarIconTable(page, window, settings)
         });
     };
 
-    const header = (label, column) =>
-    {
-        const text = new Gtk.Label(
-        {
-            label,
-            xalign: 0,
-            css_classes: ['heading'],
-            margin_bottom: 4,
-        });
-        grid.attach(text, column, 0, 1, 1);
-    };
-
     const rebuild = () =>
     {
+        const previousScroll = adjustment.get_value();
         for (let child = grid.get_first_child(); child;)
         {
             const next = child.get_next_sibling();
             grid.remove(child);
             child = next;
         }
-
-        header('Application name', 0);
-        header('Icon path', 1);
 
         const apps = appRowsFromVariant(
             settings.get_value('taskbar-apps').deep_unpack());
@@ -282,13 +318,14 @@ export function addTaskbarIconTable(page, window, settings)
                 wrap: true,
                 css_classes: ['dim-label'],
             });
-            grid.attach(empty, 0, 1, 2, 1);
+            grid.attach(empty, 0, 0, 2, 1);
+            updateArrows();
             return;
         }
 
         apps.forEach((app, index) =>
         {
-            const row = index + 1;
+            const row = index;
             const originalPath = defaultIconPath(app);
             const savedPath = iconOverrideFor(app.id, overrides);
             const displayedPath = savedPath || originalPath;
@@ -334,31 +371,55 @@ export function addTaskbarIconTable(page, window, settings)
                 hexpand: true,
             });
 
-            const pathEntry = new Gtk.Entry(
-            {
-                text: displayedPath,
-                placeholder_text: 'Theme/resource icon — choose a local file',
-                hexpand: true,
-                width_chars: 44,
+            // Compact preview prevents the column from being widened by a
+            // long filesystem path. Click it to edit the COMPLETE path.
+            const pathCell = new Gtk.Stack({ hexpand: true });
+            const pathLabel = new Gtk.Label({
+                label: condensedIconPath(displayedPath),
+                xalign: 0, hexpand: true,
+                ellipsize: Pango.EllipsizeMode.MIDDLE,
                 tooltip_text: displayedPath ||
-                    'This icon is embedded or theme-based; no ordinary file path is available.',
+                    'Theme/resource icon without a local file path',
             });
+            const pathPreview = new Gtk.Button({
+                child: pathLabel, hexpand: true,
+                tooltip_text: displayedPath ||
+                    'Click to enter an icon file path',
+                css_classes: ['flat'],
+            });
+            const pathEntry = new Gtk.Entry({
+                text: displayedPath,
+                placeholder_text: 'Enter the full local icon path',
+                hexpand: true, width_chars: 42,
+                tooltip_text: 'Full path. Enter: save. Escape: cancel.',
+            });
+            pathCell.add_named(pathPreview, 'preview');
+            pathCell.add_named(pathEntry, 'edit');
+            pathCell.set_visible_child_name('preview');
 
-            // Users can also paste an absolute path and press Enter.
-            pathEntry.connect('activate', () =>
-                setOverride(app.id, pathEntry.get_text(), originalPath,
-                    pathEntry));
-            pathEntry.connect('notify::has-focus', () =>
-            {
-                if (!pathEntry.has_focus &&
-                    pathEntry.get_text() !== displayedPath)
+            pathPreview.connect('clicked', () => {
+                pathCell.set_visible_child_name('edit');
+                pathEntry.grab_focus();
+                pathEntry.select_region(0, -1);
+            });
+            pathEntry.connect('activate', () => {
+                if (setOverride(app.id, pathEntry.get_text(),
+                    originalPath, pathEntry))
                 {
-                    setOverride(app.id, pathEntry.get_text(),
-                        originalPath, pathEntry);
+                    pathCell.set_visible_child_name('preview');
                 }
             });
+            const keys = new Gtk.EventControllerKey();
+            keys.connect('key-pressed', (_controller, keyval) => {
+                if (keyval !== Gdk.KEY_Escape)
+                    return false;
 
-            iconCell.append(pathEntry);
+                pathEntry.set_text(displayedPath);
+                pathCell.set_visible_child_name('preview');
+                return true;
+            });
+            pathEntry.add_controller(keys);
+            iconCell.append(pathCell);
 
             const browse = new Gtk.Button(
             {
@@ -384,6 +445,15 @@ export function addTaskbarIconTable(page, window, settings)
 
             grid.attach(iconCell, 1, row, 1, 1);
         });
+
+        // GSettings updates must not jump the user back to the first row.
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            adjustment.set_value(Math.min(previousScroll,
+                Math.max(adjustment.get_lower(),
+                    adjustment.get_upper() - adjustment.get_page_size())));
+            updateArrows();
+            return GLib.SOURCE_REMOVE;
+        });
     };
 
     const signals = [
@@ -398,6 +468,6 @@ export function addTaskbarIconTable(page, window, settings)
         return false;
     });
 
-    window.set_default_size(990, 730);
+    window.set_default_size(1160, 820);
     rebuild();
 }

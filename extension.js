@@ -405,6 +405,26 @@ export default class ZorinFisheyeExtension extends Extension
             new GLib.Variant('a(sssi)', rows));
     }
 
+    _iconTextureSize(source, panel)
+    {
+        // When GNOME first discovers a taskbar icon, the source actor may
+        // not yet be mapped to the stage. Waiting for get_stage() used to
+        // create a blurry Clutter.Clone which was never upgraded unless a
+        // settings toggle forced a rebuild.
+        const [nativeWidth, nativeHeight] = source.get_size();
+        const [stageWidth, stageHeight] = source.get_stage()
+            ? source.get_transformed_size() : [0, 0];
+
+        const base = Math.max(
+            nativeWidth, nativeHeight, stageWidth, stageHeight,
+            // A hidden/unallocated actor may report 0×0. A 1–2 px
+            // placeholder would itself be a blurry HD icon.
+            panel.taskbar?.iconSize ?? 0, 32);
+
+        return highResolutionSize(base,
+            1 + this._settings.get_double('magnification'));
+    }
+
     _makeOverlay(appIcon, source, panel)
     {
         const overridePath = this._customIconPath(appIcon.app?.get_id?.());
@@ -445,13 +465,9 @@ export default class ZorinFisheyeExtension extends Extension
             }
         }
 
-        if (!overlay && overridePath && !pixelPerfect &&
-            source.get_stage())
+        if (!overlay && overridePath && !pixelPerfect)
         {
-            const [width, height] = source.get_transformed_size();
-            textureSize = highResolutionSize(
-                Math.max(width, height, panel.taskbar.iconSize || 1),
-                1 + this._settings.get_double('magnification'));
+            textureSize = this._iconTextureSize(source, panel);
             overlay = new St.Icon(
             {
                 gicon: new Gio.FileIcon(
@@ -465,12 +481,9 @@ export default class ZorinFisheyeExtension extends Extension
             highResolution = true;
         }
 
-        if (!overlay && preferHighResolution && source.get_stage())
+        if (!overlay && preferHighResolution)
         {
-            const [width, height] = source.get_transformed_size();
-            textureSize = highResolutionSize(
-                Math.max(width, height, panel.taskbar.iconSize || 1),
-                1 + this._settings.get_double('magnification'));
+            textureSize = this._iconTextureSize(source, panel);
 
             try
             {
@@ -588,10 +601,13 @@ export default class ZorinFisheyeExtension extends Extension
                     const contentChanged = pixelPerfect &&
                         existing.pixelContent &&
                         existing.overlay.get_content?.() !== liveContent;
+                    const hdNotReady = !pixelPerfect &&
+                        (Boolean(overridePath) || preferHD) &&
+                        !existing.highResolution && source.get_stage();
 
                     if (!existing.bouncing && !existing.bouncePending &&
                         (existing.renderPreference !== renderPreference ||
-                         contentReady || contentChanged))
+                         contentReady || contentChanged || hdNotReady))
                     {
                         hideMagnifiedIcon(existing);
                         existing.overlay.destroy();
@@ -603,10 +619,7 @@ export default class ZorinFisheyeExtension extends Extension
                     {
                         // Changing the maximum zoom may require a larger
                         // texture; do not reload icons on every mouse event.
-                        const [w, h] = source.get_transformed_size();
-                        const size = highResolutionSize(
-                            Math.max(w, h, panel.taskbar.iconSize || 1),
-                            1 + this._settings.get_double('magnification'));
+                        const size = this._iconTextureSize(source, panel);
                         if (size > existing.textureSize)
                         {
                             existing.overlay.set_icon_size(size);
@@ -965,6 +978,8 @@ export default class ZorinFisheyeExtension extends Extension
         this._connect(entry.source, 'child-added',
             () => this._scheduleRefresh(), entry.iconSignals);
         this._connect(entry.source, 'child-removed',
+            () => this._scheduleRefresh(), entry.iconSignals);
+        this._connect(entry.source, 'notify::mapped',
             () => this._scheduleRefresh(), entry.iconSignals);
 
         const nativeIcon = entry.source.get_child?.() ??
