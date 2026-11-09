@@ -14,6 +14,7 @@ import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
 import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from './launch-bounce.js';
 import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
+import { pixelPerfectScale, findOriginalIconContent } from './pixel-scaling.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
 const CLICK_WINDOW_US = 2_000_000;
@@ -40,7 +41,7 @@ export default class ZorinFisheyeExtension extends Extension
             {
                 for (const entry of this._entries.values())
                 {
-                    if (entry.bouncing)
+                    if (entry.bouncing || entry.bouncePending)
                     {
                         this._cancelBounce(entry);
                         hideMagnifiedIcon(entry);
@@ -262,15 +263,42 @@ export default class ZorinFisheyeExtension extends Extension
 
     _makeOverlay(appIcon, source, panel)
     {
-        const preferHighResolution = shouldUseHighResolution(
+        const pixelPerfect = this._settings.get_boolean('pixel-perfect-icons');
+        const preferHighResolution = !pixelPerfect && shouldUseHighResolution(
             appIcon.app?.get_id?.(),
             this._settings.get_boolean('high-resolution-icons'),
             this._settings.get_string('native-icon-apps'));
+        const renderPreference = pixelPerfect ? 'pixel-perfect'
+            : preferHighResolution ? 'hd' : 'original';
         let overlay = null;
         let highResolution = false;
+        let pixelContent = false;
         let textureSize = 0;
 
-        if (preferHighResolution && source.get_stage())
+        if (pixelPerfect)
+        {
+            // GNOME Shell 46's St.Icon paints a child ClutterActor with
+            // the exact loaded image content. Share that *same object*,
+            // rather than asking the icon theme for a different PNG size.
+            const content = findOriginalIconContent(source);
+
+            if (content)
+            {
+                overlay = new Clutter.Actor(
+                {
+                    content,
+                    reactive: false,
+                    visible: false,
+                });
+
+                overlay.set_content_scaling_filters(
+                    Clutter.ScalingFilter.NEAREST,
+                    Clutter.ScalingFilter.NEAREST);
+                pixelContent = true;
+            }
+        }
+
+        if (!overlay && preferHighResolution && source.get_stage())
         {
             const [width, height] = source.get_transformed_size();
             textureSize = highResolutionSize(
@@ -306,6 +334,15 @@ export default class ZorinFisheyeExtension extends Extension
         {
             overlay.set_size(textureSize, textureSize);
         }
+        else if (pixelPerfect && !pixelContent)
+        {
+            // Custom icon actor with no extractable texture. This fallback
+            // retains original artwork, but Clutter.Clone may still sample
+            // smoothly because its source is an actor tree, not Content.
+            overlay.magnification_filter = Clutter.ScalingFilter.NEAREST;
+            overlay.minification_filter = Clutter.ScalingFilter.NEAREST;
+            overlay.offscreen_redirect = Clutter.OffscreenRedirect.NEVER;
+        }
 
         overlay.hide();
         Main.uiGroup.add_child(overlay);
@@ -314,7 +351,9 @@ export default class ZorinFisheyeExtension extends Extension
             overlay,
             highResolution,
             textureSize,
-            renderPreference: preferHighResolution,
+            renderPreference,
+            pixelPerfect,
+            pixelContent,
         };
     }
 
@@ -357,20 +396,36 @@ export default class ZorinFisheyeExtension extends Extension
                         this._watchIcon(existing);
                     }
 
-                    const preferHD = shouldUseHighResolution(
+                    const pixelPerfect = this._settings.get_boolean(
+                        'pixel-perfect-icons');
+                    const preferHD = !pixelPerfect && shouldUseHighResolution(
                         appIcon.app?.get_id?.(),
                         this._settings.get_boolean('high-resolution-icons'),
                         this._settings.get_string('native-icon-apps'));
+                    const renderPreference = pixelPerfect ? 'pixel-perfect'
+                        : preferHD ? 'hd' : 'original';
 
-                    if (!existing.bouncing &&
-                        existing.renderPreference !== preferHD)
+                    // If a texture becomes available later, replace the
+                    // experimental clone fallback with true pixel content.
+                    const liveContent = pixelPerfect
+                        ? findOriginalIconContent(source) : null;
+                    const contentReady = pixelPerfect &&
+                        !existing.pixelContent && Boolean(liveContent);
+                    const contentChanged = pixelPerfect &&
+                        existing.pixelContent &&
+                        existing.overlay.get_content?.() !== liveContent;
+
+                    if (!existing.bouncing && !existing.bouncePending &&
+                        (existing.renderPreference !== renderPreference ||
+                         contentReady || contentChanged))
                     {
                         hideMagnifiedIcon(existing);
                         existing.overlay.destroy();
                         Object.assign(existing,
                             this._makeOverlay(appIcon, source, panel));
                     }
-                    else if (existing.highResolution && !existing.bouncing)
+                    else if (existing.highResolution && !existing.bouncing &&
+                             !existing.bouncePending)
                     {
                         // Changing the maximum zoom may require a larger
                         // texture; do not reload icons on every mouse event.
@@ -408,9 +463,11 @@ export default class ZorinFisheyeExtension extends Extension
             {
                 this._unwatchIcon(entry);
 
-                if (entry.bouncing && entry.highResolution)
+                if ((entry.bouncing || entry.bouncePending) &&
+                    (entry.highResolution || entry.pixelContent))
                 {
-                    // A launcher may disappear when GNOME starts the app.
+                    // A launcher may disappear before our deferred bounce.
+                    // Keep the independent HD/pixel-content actor until done.
                     // The independent St.Icon can finish bouncing, even
                     // after Zorin replaces its original actor.
                     if (entry.originalOpacity !== null)
@@ -544,7 +601,9 @@ export default class ZorinFisheyeExtension extends Extension
                     return;
                 }
 
-                const scale = scales[index];
+                const scale = entry.pixelPerfect
+                    ? pixelPerfectScale(scales[index])
+                    : scales[index];
 
                 if (scale < MIN_VISIBLE_MAGNIFICATION)
                 {
@@ -580,8 +639,8 @@ export default class ZorinFisheyeExtension extends Extension
             return true;
         }
 
-        // Exact-original fallback: the source's native dimensions avoid
-        // a second transform when using a Clutter.Clone.
+        // Pixel-content or exact-original clone: native allocation avoids
+        // a second transform when displaying the source-sized texture.
         const [nativeWidth, nativeHeight] = entry.source.get_size();
         const placement = clonePlacement(
         {
@@ -613,7 +672,7 @@ export default class ZorinFisheyeExtension extends Extension
     {
         for (const entry of entries)
         {
-            if (entry.bouncing)
+            if (entry.bouncing || entry.bouncePending)
             {
                 if (!force)
                 {
@@ -636,6 +695,21 @@ export default class ZorinFisheyeExtension extends Extension
     {
         const appIcon = entry.appIcon;
         entry.iconSignals = [];
+
+        // St.Icon creates/replaces its inner image-content child when a
+        // texture finishes loading or the icon theme changes. Refresh the
+        // shared-content overlay on those native actor events, no polling.
+        const iconActor = entry.source.get_child?.() ??
+            entry.source.child;
+
+        if (iconActor)
+        {
+            this._connect(iconActor, 'child-added',
+                () => this._scheduleRefresh(), entry.iconSignals);
+            this._connect(iconActor, 'child-removed',
+                () => this._scheduleRefresh(), entry.iconSignals);
+        }
+
         entry.launchArmed = false;
         entry.launchPressed = false;
         entry.launchPressedAt = 0;
@@ -720,7 +794,8 @@ export default class ZorinFisheyeExtension extends Extension
         // matching mouse-release still emit St.Button.clicked.
         this._connect(appIcon, 'clicked', () =>
         {
-            if (entry.bouncing || !this._settings.get_boolean('bounce-enabled'))
+            if (entry.bouncing || entry.bouncePending ||
+                !this._settings.get_boolean('bounce-enabled'))
             {
                 entry.launchPressed = false;
                 entry.launchArmed = false;
@@ -752,18 +827,67 @@ export default class ZorinFisheyeExtension extends Extension
 
     _startLaunchBounce(entry, signalName)
     {
-        if (this._entries?.get(entry.source) !== entry)
+        if (this._entries?.get(entry.source) !== entry ||
+            entry.bouncing || entry.bouncePending ||
+            !entry.source.get_stage())
         {
             return;
         }
 
-        console.log('[Zorin Fisheye] Launch bounce from ' + signalName +
-            ': ' + (entry.appIcon?.app?.get_id?.() ?? 'unknown-app'));
-        this._bounce(entry);
+        // Save geometry before Zorin potentially replaces its launcher.
+        const [x, y] = entry.source.get_transformed_position();
+        const [width, height] = entry.source.get_transformed_size();
+
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        entry.bounceGeometry = { x, y, width, height };
+        entry.bouncePending = true;
+
+        // Do not change the native icon's opacity, hover or pressed state
+        // during the click event. Only the scheduled idle will touch visuals.
+        // This preserves Zorin's click dispatch and startup feedback.
+        console.log('[Zorin Fisheye] Launch bounce queued after click: ' +
+            signalName + ': ' +
+            (entry.appIcon?.app?.get_id?.() ?? 'unknown-app'));
+
+        entry.bounceIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () =>
+        {
+            entry.bounceIdleId = 0;
+
+            if (!entry.bouncePending || !this._entries)
+            {
+                return GLib.SOURCE_REMOVE;
+            }
+
+            entry.bouncePending = false;
+            const geometry = entry.bounceGeometry;
+            entry.bounceGeometry = null;
+
+            if (this._entries.get(entry.source) !== entry &&
+                !this._orphanBounces.has(entry))
+            {
+                return GLib.SOURCE_REMOVE;
+            }
+
+            this._bounce(entry, geometry);
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _cancelBounce(entry)
     {
+        if (entry.bounceIdleId)
+        {
+            GLib.Source.remove(entry.bounceIdleId);
+            entry.bounceIdleId = 0;
+        }
+
+        entry.bouncePending = false;
+        entry.bounceGeometry = null;
+
         if (!entry.bouncing)
         {
             return;
@@ -774,18 +898,33 @@ export default class ZorinFisheyeExtension extends Extension
         entry.overlay.set_translation(0, 0, 0);
     }
 
-    _bounce(entry)
+    _bounce(entry, savedGeometry = null)
     {
-        if (entry.bouncing || !entry.source.get_stage() ||
+        const orphan = this._orphanBounces.has(entry);
+
+        if (entry.bouncing || (!orphan && !entry.source.get_stage()) ||
             Main.overview.visible)
         {
             console.warn('[Zorin Fisheye] Bounce skipped: icon not staged, ' +
                 'animation active or overview visible');
+
+            if (orphan)
+            {
+                this._cancelBounce(entry);
+                entry.overlay.destroy();
+                this._orphanBounces.delete(entry);
+            }
+
             return;
         }
 
-        const [x, y] = entry.source.get_transformed_position();
-        const [width, height] = entry.source.get_transformed_size();
+        const { x, y, width, height } = savedGeometry ??
+            (() =>
+            {
+                const [px, py] = entry.source.get_transformed_position();
+                const [w, h] = entry.source.get_transformed_size();
+                return { x: px, y: py, width: w, height: h };
+            })();
 
         if (width <= 0 || height <= 0)
         {
@@ -802,7 +941,15 @@ export default class ZorinFisheyeExtension extends Extension
             return;
         }
 
-        showMagnifiedIcon(entry);
+        if (orphan)
+        {
+            // Source no longer exists. Animate independent HD/Content actor.
+            entry.overlay.show();
+        }
+        else
+        {
+            showMagnifiedIcon(entry);
+        }
 
         const amplitude = this._settings.get_int('bounce-height');
         const position = entry.panel.geom?.position;

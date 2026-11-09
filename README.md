@@ -24,7 +24,7 @@ These are firsthand desktop observations, not a complete compatibility or regres
 - If the exact Zorin icon appearance matters more than sharpness, disable **High-resolution icons** in preferences to use a non-reactive `Clutter.Clone` of the native icon instead.
 - The visual overlay is prepared when icons are added to the taskbar, never loaded on every mouse movement. HD textures are scaled **down** into their intended footprint; the original-icon fallback uses native allocation. At exactly 1×, only Zorin's original icon is painted.
 - Child-added/removed and panel-created signals replace the former 700 ms polling. Leaving the taskbar restores the original icon immediately.
-- On a completed primary-button click on a **stopped** application, the icon begins bouncing. The extension now listens to Zorin's app icon `captured-event`, `button-press-event`, `button-release-event` and `clicked` signals directly, instead of relying on the global stage event's nullable source actor or hit-testing. Independent HD overlays can finish bouncing even if Zorin replaces the launcher. Already-running apps do not bounce; this indicates a launch attempt, not proof of successful startup.
+- On a completed primary-button click on a **stopped** application, the icon queues the bounce in a GLib idle callback, *after* the native button handler has completed. No icon paint-opacity changes occur during the click event; visual changes start only in the idle callback. It is a suspected fix for a busy cursor lingering over the taskbar until the user clicks empty panel space, pending a real Zorin test. An independent HD/pixel-content overlay can finish bouncing if Zorin replaces the launcher before that callback. The extension listens to Zorin's app icon `captured-event`, `button-press-event`, `button-release-event` and `clicked` signals directly, instead of relying on the global stage event's nullable source actor or hit-testing. Independent HD overlays can finish bouncing even if Zorin replaces the launcher. Already-running apps do not bounce; this indicates a launch attempt, not proof of successful startup.
 - A settings window is available from the extension's preferences button in Extension Manager.
 - No replacement taskbar, new autohide behavior or reserved-screen-area changes.
 - Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
@@ -59,7 +59,21 @@ You can test this without publishing to the GNOME Extensions store.
    gnome-extensions disable zorin-fisheye@criger.github.io
    ```
 
-**Testing the current feature branch from an existing clone:**
+**Testing the current bugfix branch from an existing clone:**
+
+```bash
+cd ~/zorinos-fisheye-taskbar
+git fetch origin
+git switch fix/pixel-perfect-and-launch-cursor
+git pull --ff-only origin fix/pixel-perfect-and-launch-cursor
+npm run check
+gnome-extensions disable zorin-fisheye@criger.github.io
+bash scripts/install-local.sh
+```
+
+Log out and in on GNOME/Wayland to load the changed extension module.
+
+**Previous (merged) feature branch instructions, retained for reference:**
 
 ```bash
 cd ~/zorinos-fisheye-taskbar
@@ -80,6 +94,7 @@ Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** 
 
 - Maximum icon magnification (1× to 2×).
 - High-resolution icon rendering (default on). Turn it off globally to preserve the exact native artwork.
+- **Pixel-perfect 2×** (experimental, default off): take the actual **already loaded `Clutter.Content`** from Zorin's `St.Icon` texture child, draw that *same content object* in a separate actor with `NEAREST` sampling, and snap fisheye scales to strictly 1× or 2×. No high-resolution icon-size lookup or alternate PNG is performed, so the Chrome application's original background should remain intact. If a custom icon actor exposes no content, fall back to `Clutter.Clone` (which may still be blurry). Pixel-perfect creates a stepped rather than fluid magnification; it must be visually tested on GNOME 46. It overrides the HD switch and per-app exceptions while enabled.
 - Native icon exceptions: specify app desktop IDs separated by commas to keep the original appearance for **only those apps**. This is useful when Chrome installed an opaque small PNG but a transparent large PNG. Such exceptions may look softer when enlarged; to get both HD sharpness and the same background, the application's high-resolution source asset must be corrected.
 - Influence radius (20–300 logical pixels).
 - Whether stopped applications bounce on launch.
@@ -135,7 +150,9 @@ journalctl --user -b | grep -i 'zorin-fisheye'
 - Monitor changes, logout/login, overview, fullscreen and autohide.
 - Hover then move the pointer outside the taskbar: the icon should revert **immediately**, not after 700 ms.
 - Add and remove running applications: icon clones must be created and destroyed without background polling.
-- Launch a **stopped** application from the taskbar: bounce should start on mouse release (or native `clicked` fallback). Clicking an already-running app must not bounce. Dragging or releasing outside the app icon must not bounce.
+- Launch a **stopped** application from the taskbar: bounce should start just **after** native mouse click processing. Click an already-running app, or drag/release outside, and verify no bounce.
+- Check the mouse cursor after each launch: it must not keep a busy spinner when returning to the taskbar. If it persists, test with bounce disabled, then inspect `journalctl --user -b --no-pager | grep -F '[Zorin Fisheye]' | tail -30`. GNOME also legitimately shows a startup busy cursor until activation is complete, so do not indiscriminately override `Meta.Cursor`.
+- Test Pixel-perfect 2× on/off, especially ChatGPT Chrome app white background, against HD mode. Pixel-perfect is a deliberately stepped 1×/2× mode, not a smooth fisheye interpolation.
 - If bounce still fails, immediately inspect the extension's own event traces with `journalctl --user -b --no-pager | grep -F '[Zorin Fisheye]' | tail -30`. A `Launch press armed` line means the icon received the event; `Launch bounce from` means animation was requested; `Bounce skipped` points to a missing source actor/overview state.
 - Open preferences from Extension Manager and change zoom, influence radius, bounce toggle and height.
 - Verify native HD icons appear sharper again at 1.5× or 2×. Compare Chrome-app icon backgrounds with HD on/off: Chrome may have different PNG artwork at 32×32 and 128×128. To preserve only the ChatGPT Chrome app's white background without disabling HD globally, add its desktop ID (`chrome-cadlkienfkclaiaibeoongdcgmdikeeg-Default.desktop`) under native icon exceptions in preferences.

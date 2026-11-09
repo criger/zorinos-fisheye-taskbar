@@ -54,6 +54,15 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         settings.bind('high-resolution-icons', highResolutionRow, 'active',
             Gio.SettingsBindFlags.DEFAULT);
 
+        const pixelPerfectRow = new Adw.SwitchRow(
+        {
+            title: 'Pixel-perfect 2× (nearest-neighbor)',
+            subtitle: 'Scale the original taskbar icon to 1× or 2× without blur. Overrides HD and native-icon exceptions. Magnification should be at least 0.50.',
+        });
+        magnification.add(pixelPerfectRow);
+        settings.bind('pixel-perfect-icons', pixelPerfectRow, 'active',
+            Gio.SettingsBindFlags.DEFAULT);
+
         const nativeAppsRow = new Adw.EntryRow(
         {
             title: 'Apps keeping original icons (.desktop IDs)',

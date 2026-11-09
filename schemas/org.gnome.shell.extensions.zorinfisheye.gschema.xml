@@ -11,6 +11,11 @@
       <summary>Prefer high-resolution application icon textures</summary>
       <description>Sharper enlarged icons, but some applications use different artwork in different icon sizes. When disabled, render a clone of the exact original Zorin Taskbar icon.</description>
     </key>
+    <key name="pixel-perfect-icons" type="b">
+      <default>false</default>
+      <summary>Use nearest-neighbor integer 1x/2x scaling of the displayed Zorin icon</summary>
+      <description>Experimental rendering mode. When enabled, the original Zorin icon is scaled in integer steps and no alternate high-resolution icon is loaded. Overrides high-resolution-icons and native-icon-apps.</description>
+    </key>
     <key name="native-icon-apps" type="s">
       <default>''</default>
       <summary>Application IDs that should keep their original Zorin icon</summary>

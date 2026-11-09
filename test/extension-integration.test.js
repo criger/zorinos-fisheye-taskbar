@@ -51,10 +51,11 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
 
     class Clone extends Actor
     {
-        constructor({ source })
+        constructor({ source, content })
         {
             super();
             this.source = source;
+            this.content = content;
             this.visible = false;
             this.bounceSteps = 0;
         }
@@ -63,7 +64,12 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         set_position(x, y) { this.x = x; this.y = y; }
         set_size(w, h) { this.w = w; this.h = h; }
         set_pivot_point() {}
-        set_scale() {}
+        set_scale(sx, sy) { this.scaleX = sx; this.scaleY = sy; }
+        set_content_scaling_filters(min, mag)
+        {
+            this.contentFilters = { min, mag };
+        }
+        get_content() { return this.content ?? null; }
         set_icon_size(size) { this.w = size; this.h = size; }
         set_translation() {}
         remove_all_transitions() {}
@@ -94,6 +100,12 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         },
     };
     const source = new Actor(90, 995);
+    const originalPixels = { type: 'already-loaded-image', background: 'white' };
+    const textureChild = new Actor(90, 995);
+    textureChild.get_content = () => originalPixels;
+    const iconChild = new Actor(90, 995);
+    iconChild.get_children = () => [textureChild];
+    source.get_child = () => iconChild;
     const icon = new Actor(87, 992, 40, 40);
     icon.app = app;
     icon.icon = { _iconBin: source };
@@ -127,8 +139,11 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     };
     const Clutter = {
         Clone,
+        Actor: Clone,
         EventType: { MOTION: 1, ENTER: 2, LEAVE: 3, BUTTON_PRESS: 4, BUTTON_RELEASE: 5 },
         EVENT_PROPAGATE: false,
+        ScalingFilter: { NEAREST: 'nearest', LINEAR: 'linear' },
+        OffscreenRedirect: { NEVER: 'never' },
         AnimationMode: { EASE_OUT_QUAD: 1, EASE_IN_QUAD: 2 },
     };
     const Shell = {
@@ -152,9 +167,11 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     let zoom = 0.5;
     settings.get_double = () => zoom;
     let useHD = true;
+    let pixelPerfect = false;
     let nativeIconApps = '';
     settings.get_boolean = (key) =>
-        key === 'high-resolution-icons' ? useHD : true;
+        key === 'high-resolution-icons' ? useHD :
+        key === 'pixel-perfect-icons' ? pixelPerfect : true;
     settings.get_string = () => nativeIconApps;
     class Extension
     {
@@ -179,14 +196,19 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const iconRendering = readFileSync(
         new URL('../icon-rendering.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const pixelScaling = readFileSync(
+        new URL('../pixel-scaling.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
 
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
-        launchBounce + '\n' + iconGeometry + '\n' + iconRendering + '\nreturn {' +
+        launchBounce + '\n' + iconGeometry + '\n' +
+        iconRendering + '\n' + pixelScaling + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
         'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
         'clonePlacement, highResolutionSize, highResolutionPlacement, ' +
-        'shouldUseHighResolution};')();
+        'shouldUseHighResolution, pixelPerfectScale, ' +
+        'findOriginalIconContent};')();
 
     const ExtensionType = new Function(
         'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
@@ -236,6 +258,45 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     settings.emit('changed');
     assert.equal(extension._entries.get(source).highResolution, true);
 
+    // Nearest-neighbor uses the exact existing icon and strict 1x/2x scaling.
+    pixelPerfect = true;
+    settings.emit('changed');
+    const pixelEntry = extension._entries.get(source);
+    assert.equal(pixelEntry.highResolution, false);
+    assert.equal(pixelEntry.pixelPerfect, true);
+    assert.equal(pixelEntry.overlay.content, originalPixels,
+        'pixel mode shares the exact loaded icon texture content');
+    assert.equal(pixelEntry.overlay.source, undefined,
+        'pixel mode does not recursively clone the source actor');
+    assert.equal(pixelEntry.pixelContent, true);
+    assert.deepEqual(pixelEntry.overlay.contentFilters,
+        { min: Clutter.ScalingFilter.NEAREST,
+          mag: Clutter.ScalingFilter.NEAREST });
+    assert.equal(pixelEntry.overlay.offscreen_redirect, undefined,
+        'content actor does not need an offscreen cache or redirect');
+    zoom = 0.75;
+    pointer = [106, 1010];
+    stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+    assert.equal(pixelEntry.overlay.scaleX, 2);
+
+    // GNOME may replace an icon texture after initial load/theme changes.
+    // Observe native St.Icon child events and refresh shared content once.
+    const newPixels = { type: 'already-loaded-image', background: 'blue' };
+    textureChild.get_content = () => newPixels;
+    iconChild.emit('child-added', textureChild);
+    assert.equal(idle.length, 1);
+    idle.shift()();
+    assert.equal(pixelEntry.overlay.content, newPixels,
+        'pixel renderer follows native texture replacement');
+
+    zoom = 0;
+    stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+    assert.equal(source.opacity, 255, 'pixel-perfect 1x paints native icon');
+    zoom = 0.5;
+    pixelPerfect = false;
+    settings.emit('changed');
+    assert.equal(extension._entries.get(source).highResolution, true);
+
     pointer = [100, 800];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 255, 'first movement outside must restore');
@@ -276,10 +337,20 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     // The native appIcon actor now owns press/release/click detection.
     icon.emit('button-press-event', press);
     assert.equal(clone.bounceSteps, 0, 'press alone must not bounce');
+    const opacityBeforeRelease = source.opacity;
     icon.emit('button-release-event', release);
     icon.emit('clicked');
+    assert.equal(clone.bounceSteps, 0,
+        'native click dispatch must finish before bounce begins');
+    assert.equal(source.opacity, opacityBeforeRelease,
+        'native icon opacity is unchanged throughout the click');
+    assert.equal(extension._entries.get(source).bouncePending, true);
+    assert.equal(idle.length, 1, 'exactly one deferred bounce');
+    // App state can change before the decorative animation runs.
+    app.state = Shell.AppState.RUNNING;
+    idle.shift()();
     assert.equal(clone.bounceSteps, 4,
-        'completed click on stopped app starts one bounce sequence');
+        'a stopped-app click yields one deferred bounce');
 
     app.state = Shell.AppState.RUNNING;
     icon.emit('button-press-event', press);
@@ -316,14 +387,39 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     });
     icon.emit('button-release-event', release);
     icon.emit('clicked');
+    assert.equal(clone.bounceSteps, 4,
+        'captured+native click handlers never animate synchronously');
+    assert.equal(idle.length, 1,
+        'captured+native handlers queue only one idle callback');
+    idle.shift()();
     assert.equal(clone.bounceSteps, 8,
-        'captured+native signals trigger exactly one bounce sequence');
+        'captured+native signals trigger exactly one deferred bounce sequence');
 
     icons = [icon];
     box.emit('child-removed', secondIcon);
     idle.shift()();
     assert.equal(extension._entries.size, 1);
-    extension.disable();
-    assert.equal(source.opacity, 255);
+
+    // A pinned launcher can be removed while the deferred bounce waits.
+    // A self-contained HD overlay must survive until its two hops finish.
+    app.state = Shell.AppState.STOPPED;
+    icon.emit('button-press-event', press);
+    icon.emit('button-release-event', release);
+    icon.emit('clicked');
+    assert.equal(extension._entries.get(source).bouncePending, true);
+    assert.equal(clone.destroyed, undefined);
+    icons = [];
+    box.emit('child-removed', icon);
+    assert.equal(idle.length, 2);
+    idle.pop()(); // Force Zorin's child-removed refresh before bounce idle.
+    assert.equal(extension._entries.size, 0);
+    assert.equal(extension._orphanBounces.size, 1);
+    assert.equal(clone.destroyed, undefined);
+    idle.shift()(); // Complete queued bounce using pre-captured geometry.
+    assert.equal(clone.bounceSteps, 12);
     assert.equal(clone.destroyed, true);
+    assert.equal(extension._orphanBounces.size, 0);
+    assert.equal(source.opacity, 255);
+
+    extension.disable();
 });
