@@ -6,6 +6,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { addTaskbarIconTable } from './icon-preferences.js';
 
 export default class ZorinFisheyePreferences extends ExtensionPreferences
 {
@@ -54,12 +55,13 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         settings.bind('high-resolution-icons', highResolutionRow, 'active',
             Gio.SettingsBindFlags.DEFAULT);
 
-        const nativeAppsRow = new Adw.EntryRow(
+        const pixelPerfectRow = new Adw.SwitchRow(
         {
-            title: 'Apps keeping original icons (.desktop IDs)',
+            title: 'Pixel-perfect 2× — HIGHLY EXPERIMENTAL',
+            subtitle: 'Intentionally blocky on modern icons. Nearest-neighbor 1×/2× from the original pixels; overrides HD.',
         });
-        magnification.add(nativeAppsRow);
-        settings.bind('native-icon-apps', nativeAppsRow, 'text',
+        magnification.add(pixelPerfectRow);
+        settings.bind('pixel-perfect-icons', pixelPerfectRow, 'active',
             Gio.SettingsBindFlags.DEFAULT);
 
         const radiusRow = new Adw.SpinRow(
@@ -119,5 +121,44 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
             settings.set_int('bounce-height',
                 Math.round(heightRow.get_value()));
         });
+
+        // The normal Adw.PreferencesPage has a ~600px Clamp, even if
+        // PreferencesWindow is maximized. Keep controls compact, but give
+        // the file-path table its own wider tab.
+        const iconsPage = new Adw.PreferencesPage(
+        {
+            title: 'Icons',
+            icon_name: 'applications-graphics-symbolic',
+        });
+        window.add(iconsPage);
+
+        const widen = (widget) =>
+        {
+            if (!widget)
+                return false;
+
+            if (widget instanceof Adw.Clamp)
+            {
+                widget.set_maximum_size(1040);
+                widget.set_tightening_threshold(1140);
+                return true;
+            }
+
+            for (let child = widget.get_first_child?.(); child;
+                child = child.get_next_sibling?.())
+            {
+                if (widen(child))
+                    return true;
+            }
+
+            return false;
+        };
+
+        // AdwPreferencesPage's internal GtkScrolledWindow -> viewport ->
+        // Adw.Clamp exists in libadwaita's public layout; do not alter
+        // the clamp belonging to the regular Fisheye settings page.
+        widen(iconsPage);
+        iconsPage.connect('map', () => widen(iconsPage));
+        addTaskbarIconTable(iconsPage, window, settings);
     }
 }
