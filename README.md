@@ -172,7 +172,9 @@ journalctl --user -b --no-pager | grep -i 'zorin-fisheye\|Zorin Fisheye' | tail 
 ```
 
 If you are reporting a bug, include your **Zorin OS version, GNOME version, Wayland/X11 session, taskbar position, display scaling**, what you expected and what happened.  
-Screenshots help too. [Open a GitHub issue](https://github.com/criger/zorinos-fisheye-taskbar/issues).
+Screenshots help too.  
+
+[Open a GitHub issue](https://github.com/criger/zorinos-fisheye-taskbar/issues).
 
 ## How it works (for the curious)
 
