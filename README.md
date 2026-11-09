@@ -1,231 +1,139 @@
 # Zorin Taskbar Fisheye
 
-An experimental **macOS-style fisheye magnification effect for Zorin OS's existing Windows-style taskbar**.
+**Bring macOS-style Dock magnification to the taskbar you already love in Zorin OS.**
 
-**By Cristhian Gertner.** Independent community project; not an official Zorin OS or GNOME extension.
+Zorin Taskbar Fisheye adds a smooth, animated *fisheye* effect to application icons on **Zorin OS's existing, full-width taskbar**. Hover over an icon and it grows; nearby icons respond according to their distance from the pointer. Move away and the taskbar returns to normal.
 
-## Why?
+**No replacement dock. No new panel. No change to your familiar Windows-style desktop layout.**
 
-Zorin's built-in taskbar already handles window previews, pinned and running apps, dragging between windows, multiple monitors and full-width sizing. Replacing that taskbar with a dock just to get magnification can break these behaviors.
+![Before and after: Zorin OS taskbar icons in their normal size and with macOS-style fisheye magnification on hover](assets/screenshots/zorin-fisheye-demo.webp)
 
-The goal is to **keep the native taskbar** and add only a visual effect. We must not change the reserved panel height or take over input handling.
+*The same Zorin Taskbar before and during hover. Your launcher, pinned applications and system area stay where they belong.*
 
-## Status
+**Status:** Experimental, working on the author's Zorin OS 18 / GNOME Shell 46 desktop with a bottom-positioned taskbar. **License:** [GPL-3.0](LICENSE). **Not an official Zorin OS or GNOME extension.**
 
-**v0.1 — experimental, but successfully tested on Zorin OS 18 / GNOME 46.** The author reports that fisheye magnification works on all Zorin desktop layouts tested with a bottom-positioned taskbar, including layouts that do not resemble Windows. The left-side **vertical** layout is a known limitation: magnification did not work there in the initial test.
+## Why another fisheye extension?
 
-These are firsthand desktop observations, not a complete compatibility or regression test.
+Zorin OS already has a capable taskbar. It handles your running and pinned apps, window previews, application switching and the familiar full-width layout. If you only want the visual effect of the macOS Dock, **replacing that taskbar with a separate dock is a big compromise**.
 
-## Expected behavior
+This extension takes a smaller approach: **keep Zorin Taskbar in charge, and add magnification as a visual layer.** It is designed not to take over clicks, drag-and-drop, window previews, autohide or the screen space reserved for your taskbar.
 
-- Zorin Taskbar retains responsibility for clicks, drag-and-drop, previews, app management and window switching.
-- Icons nearest the pointer grow; nearby icons grow less, using a cosine falloff.
-- By default, request a **2× (or larger when configured) high-resolution app icon** using `Shell.App.create_icon_texture`. This restores the sharper rendering tested earlier, but apps may provide different artwork at different sizes.
-- If the exact Zorin icon appearance matters more than sharpness, disable **High-resolution icons** in preferences to use a non-reactive `Clutter.Clone` of the native icon instead.
-- The visual overlay is prepared when icons are added to the taskbar, never loaded on every mouse movement. HD textures are scaled **down** into their intended footprint; the original-icon fallback uses native allocation. At exactly 1×, only Zorin's original icon is painted.
-- Child-added/removed and panel-created signals replace the former 700 ms polling. Leaving the taskbar restores the original icon immediately.
-- On a completed primary-button click on a **stopped** application, the icon queues the bounce in a GLib idle callback, *after* the native button handler has completed. No icon paint-opacity changes occur during the click event; visual changes start only in the idle callback. It is a suspected fix for a busy cursor lingering over the taskbar until the user clicks empty panel space, pending a real Zorin test. An independent HD/pixel-content overlay can finish bouncing if Zorin replaces the launcher before that callback. The extension listens to Zorin's app icon `captured-event`, `button-press-event`, `button-release-event` and `clicked` signals directly, instead of relying on the global stage event's nullable source actor or hit-testing. Independent HD overlays can finish bouncing even if Zorin replaces the launcher. Already-running apps do not bounce; this indicates a launch attempt, not proof of successful startup.
-- A settings window is available from the extension's preferences button in Extension Manager.
-- No replacement taskbar, new autohide behavior or reserved-screen-area changes.
-- Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
+### Highlights
 
-**Known limitations:** Magnification did not work with the left-side vertical taskbar layout in the initial Zorin test. The new event-driven behavior, launch bounce and preferences UI are experimental and require an actual Zorin/GNOME Shell 46 regression test. The prototype draws a magnified visual overlay but does not reposition neighboring native icons; they may overlap while enlarged. Zorin Taskbar's internal actor structure is not a stable public API. Different scaling, multi-monitor setups, X11/Wayland, drag-and-drop and autohide still need systematic regression testing.
+- **Smooth fisheye magnification** with a configurable influence radius and maximum icon size (up to 2×).
+- **Three rendering approaches:** sharp high-resolution icons (default), retro Pixel Perfect, and experimental HiDef AA with 1×–3× filtering.
+- **Launch bounce:** optionally animate an icon when starting an application, without bouncing when merely switching to one that's already running.
+- **Per-application icon choice:** browse for an SVG, PNG or other supported image in an easy-to-use settings tab.
+- **Native taskbar layout:** no second dock, extra autohide mechanism or increased reserved taskbar height.
+- **Local and lightweight:** a GNOME Shell extension written in JavaScript/GJS, with settings stored locally in GSettings. No account or online service is required.
 
-## Local installation (Zorin OS 18)
+## Install on Zorin OS
 
-You can test this without publishing to the GNOME Extensions store.
+The initial target is **Zorin OS 18 with GNOME Shell 46** and Zorin Taskbar enabled. Other GNOME versions and other Linux distributions have not been verified. Installation is local to your user account; it does **not** need `sudo`.
 
-1. **Disable any other dock extensions** you may have enabled (for example MacOS Dock or Dash2Dock Animated), but **keep Zorin's built-in Taskbar enabled**. You can use any of the Zorin layout presets tested with a taskbar along the bottom; the left-side vertical layout is not working yet.
-2. Clone this repository and run the installer:
+### 1. Download and install
 
-   ```bash
-   cd ~
-   git clone https://github.com/criger/zorinos-fisheye-taskbar.git
-   cd zorinos-fisheye-taskbar
-   bash scripts/install-local.sh
-   ```
+Open Terminal and run:
 
-3. If GNOME does not discover the newly installed extension immediately, log out and back in. Then enable it:
+```bash
+git clone https://github.com/criger/zorinos-fisheye-taskbar.git
+cd zorinos-fisheye-taskbar
+bash scripts/install-local.sh
+```
 
-   ```bash
-   gnome-extensions enable zorin-fisheye@criger.github.io
-   ```
+The installer copies the extension to `~/.local/share/gnome-shell/extensions/` and compiles its GSettings schema. It needs `git`, `bash` and `glib-compile-schemas` (normally available on Zorin OS).
 
-   You can also enable it from Extension Manager once it appears in your installed extensions.
+### 2. Activate the extension
 
-4. To turn off only the magnification effect (without removing Zorin Taskbar), run:
+**Log out of your desktop session and log back in**, then enable **Zorin Taskbar Fisheye** in Extension Manager or run:
 
-   ```bash
-   gnome-extensions disable zorin-fisheye@criger.github.io
-   ```
+```bash
+gnome-extensions enable zorin-fisheye@criger.github.io
+```
 
-**Testing the current bugfix branch from an existing clone:**
+**Important:** If the extension appears enabled but does not behave as expected after logging out and in, **restart your computer**. A full restart can be needed for GNOME Shell to load updated extension code correctly. On Wayland, do not use `Alt+F2` → `r` as a substitute for logging out or restarting.
+
+![Zorin Taskbar Fisheye enabled alongside ArcMenu in GNOME Extension Manager](assets/screenshots/zorin-extension-manager.webp)
+
+### 3. Make it your own
+
+Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** (gear icon). You can change magnification, radius, rendering quality and launch animation without editing code.
+
+![Zorin Taskbar Fisheye preferences showing magnification, rendering modes, influence radius and bounce controls](assets/screenshots/zorin-fisheye-preferences.webp)
+
+## Choose how your icons look
+
+You can leave the defaults alone, or experiment with these rendering methods:
+
+| Rendering | What it does | Best for |
+| --- | --- | --- |
+| **High-resolution icons** (default) | Requests larger icon artwork for sharper, smoothly magnified icons. | Everyday use and crisp icons. |
+| **Pixel Perfect 2×** (highly experimental) | Enlarges the *original* icon with nearest-neighbor pixels, snapping between 1× and 2×. | A deliberately blocky, retro effect. |
+| **HiDef AA** (highly experimental) | Keeps the original icon artwork and uses continuous fisheye scaling with filtered interpolation. Select **1×, 2× or 3×** AA quality. | Comparing smoother original-icon rendering. |
+
+**Pixel Perfect and HiDef AA are mutually exclusive.** Enabling one switches the other off. If both are off, the normal high-resolution setting applies. You can also disable **High-resolution icons** to keep the exact original icon appearance using a native-icon clone.
+
+A note on **HiDef AA 1×–3×**: these values control an experimental rendering/filtering approach, **not** how many times larger the icon gets. At 2×/3× it uses a larger intermediate offscreen surface and another filtering pass. It is *not* MSAA, AI upscaling or a way to recover detail that was never present in a low-resolution image. Higher settings can look softer or use more GPU resources.
+
+Some applications ship different artwork or backgrounds at different icon sizes. If the high-resolution version looks different (for example, a Chrome-installed app), you can keep that application's native icon or supply your own image in the **Icons** tab.
+
+## Give individual applications the right icon
+
+The **Icons** tab lists the applications currently pinned to or running on your Zorin Taskbar. See their resolved image paths when available, choose a replacement with **…**, or reset an override. Changes affect both the normal and magnified taskbar icon; the application's `.desktop` file is not rewritten.
+
+![Zorin Taskbar Fisheye Icons settings listing applications and editable icon file paths](assets/screenshots/zorin-icon-overrides.webp)
+
+For best results, choose **SVG** or a square **PNG at least 128 × 128 pixels** (256 × 256 is even better). Some themed or embedded icons do not have a regular file path; an empty path is normal, and you can still choose a replacement.
+
+## Update an existing installation
+
+If you already cloned this repository, use the latest `main` branch:
 
 ```bash
 cd ~/zorinos-fisheye-taskbar
-git fetch origin
-git switch fix/pixel-perfect-and-launch-cursor
-git pull --ff-only origin fix/pixel-perfect-and-launch-cursor
-npm run check
+git switch main
+git pull --ff-only origin main
+
 gnome-extensions disable zorin-fisheye@criger.github.io
 bash scripts/install-local.sh
 ```
 
-Log out and in on GNOME/Wayland to load the changed extension module.
+Log out and back in. If the updated extension still behaves strangely, **restart the computer** before reporting a problem. Enable it again in Extension Manager if necessary.
 
-**Previous (merged) feature branch instructions, retained for reference:**
+To temporarily switch off the effect without changing Zorin Taskbar itself:
 
 ```bash
-cd ~/zorinos-fisheye-taskbar
-git fetch origin
-git switch fix/duplicate-hover-icon
-git pull --ff-only origin fix/duplicate-hover-icon
 gnome-extensions disable zorin-fisheye@criger.github.io
-bash scripts/install-local.sh
 ```
 
-Log out and back in to reload GNOME Shell's extension code, then enable it using the command above.
+## Compatibility and known limitations
 
-**Wayland:** Do not restart GNOME Shell with `Alt+F2 → r`. Log out and in instead.
+- **Tested:** Zorin OS 18 / GNOME Shell 46 with various **bottom-positioned** Zorin taskbar layouts. Other systems and GNOME versions are not currently verified.
+- **Known limitation:** the **left-side vertical taskbar** layout did not magnify correctly in the author's tests.
+- The effect draws enlarged icons over the native taskbar. Neighbouring icons are not physically moved aside, so very large icons can overlap visually.
+- **Hover labels:** if Zorin does not show an application label for a running program, this extension does not force one to appear. The same behaviour can occur with the extension disabled; Zorin owns native tooltip visibility.
+- The extension depends on Zorin Taskbar internals, which may change in future releases. Other dock/taskbar extensions can conflict with it.
 
-## Per-app icon selection (new experimental UI)
+### Something not working?
 
-The preferences have two tabs: **Fisheye** for normal settings, and a
-separate **Icons** tab with more horizontal and vertical space. We widen the
-Icons page's libadwaita clamp without affecting the compact Fisheye page.
+First check that **Zorin Taskbar remains enabled** and that other replacement docks are not active. Try logging out and back in, then a **full restart** if needed.
 
-Full icon paths are **condensed** in each row, but clicking the path displays
-the complete path in an editable field. Press **Enter** to save or **Escape**
-to cancel; hovering over the path shows the full text in a tooltip. The
-file-picker (**…**) and reset buttons remain alongside each icon.
-
-A permanently visible vertical scrollbar and conditional
-**↑ More applications above / ↓ More applications below** controls make
-additional rows discoverable. These indicators reflect the actual GTK
-scroll adjustment; the view preserves its position after an icon change.
-The icon table has a substantially taller viewport instead of the
-previous 180-pixel area.
-
-**Initial HD sharpness fix:** high-resolution icon textures are prepared
-using native icon dimensions (with a safe 32-pixel fallback) even when
-the actor has not yet joined the GNOME stage. A late-mapped icon
-automatically retries an unavailable HD texture through mapped/child
-events. HD remains enabled by default; users no longer need to toggle
-it to replace an initial blurry clone when normal icons are available.
-
-
-**Extension Manager → Settings → Taskbar application icons** displays the actual
-pinned/running application icons in Zorin Taskbar as a two-column list:
-
-| Application name | Icon path |
-| --- | --- |
-| Name from the taskbar application | Current icon file path (when resolvable), editable field, **…** browse button and **Reset** button |
-
-Selecting a local image file updates both the **normal taskbar icon** and its
-**enlarged fisheye rendering**, without changing the `.desktop` file or replacing
-the taskbar. Supported image types depend on the local GTK/GNOME installation;
-PNG, SVG, WebP, JPEG and ICO are accepted when supported. You can paste an
-absolute path into the field and press Enter. Reset removes the override.
-
-**Important:** A small or non-square source image can look distorted/blurry when
-enlarged. Prefer vector SVG or square PNG at least 128×128 (ideally 256×256).
-
-The visible list is published by the running GNOME Shell extension through a
-compact, event-driven GSettings snapshot. The preferences window runs in a
-different process, so it does not introspect GNOME Shell itself. A changed
-taskbar icon list automatically refreshes the table. Overridden icon paths are
-saved by **desktop application ID**, and remain configured if an app is
-temporarily absent from the taskbar.
-
-Some themed, embedded, symbolic or generated icons have **no normal filesystem
-path**. In that case the field is empty with a placeholder, and the user can
-still browse for a replacement. GTK's themed-icon lookup chooses a path at
-the app's nominal taskbar size; the actual texture chosen by GNOME Shell can
-differ by screen scale or icon theme. Existing `native-icon-apps` exceptions
-continue to work for applications without a custom icon path.
-
-**Scope:** Overrides affect icons while Zorin Taskbar Fisheye is enabled.
-Disabling the extension restores the original icons. This does not globally
-change icons in menus, other docks or the applications' own desktop files.
-
-## Configuration
-
-Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** (the gear icon) to adjust:
-
-- Maximum icon magnification (1× to 2×).
-- High-resolution icon rendering (default on). Turn it off globally to preserve the exact native artwork.
-- **HiDef AA** (**HIGHLY EXPERIMENTAL**, default off): uses original icon pixels with continuous fisheye, and selectable **1×/2×/3×** interpolation. 1× uses single-pass linear sampling; 2×/3× experiment with drawing into a larger offscreen buffer and scaling it back down. This may smooth pixel edges but cannot invent missing resolution; it may look soft or use more GPU resources. Enabling HiDef AA disables Pixel Perfect and vice versa, even if settings are changed with GSettings. AA quality is enabled only in HiDef AA mode; standard High Resolution remains the default.
-- **Pixel-perfect 2×** (**HIGHLY EXPERIMENTAL**, default off): take the actual **already loaded `Clutter.Content`** from Zorin's `St.Icon` texture child, draw that *same content object* in a separate actor with `NEAREST` sampling, and snap fisheye scales to strictly 1× or 2×. No high-resolution icon-size lookup or alternate PNG is performed, so the Chrome application's original background should remain intact. If a custom icon actor exposes no content, fall back to `Clutter.Clone` (which may still be blurry). Pixel-perfect creates a stepped rather than fluid magnification; it must be visually tested on GNOME 46. It overrides the HD switch and per-app exceptions while enabled.
-- Native icon exceptions: specify app desktop IDs separated by commas to keep the original appearance for **only those apps**. This is useful when Chrome installed an opaque small PNG but a transparent large PNG. Such exceptions may look softer when enlarged; to get both HD sharpness and the same background, the application's high-resolution source asset must be corrected.
-- Influence radius (20–300 logical pixels).
-- Whether stopped applications bounce on launch.
-- Bounce height (4–40 logical pixels).
-
-Changes are stored in GSettings and applied without restarting the extension. The existing keys can still be changed from the terminal:
+For diagnostic messages, run:
 
 ```bash
-SCHEMA="$HOME/.local/share/gnome-shell/extensions/zorin-fisheye@criger.github.io/schemas"
-KEY="org.gnome.shell.extensions.zorinfisheye"
-
-gsettings --schemadir "$SCHEMA" get "$KEY" magnification
-gsettings --schemadir "$SCHEMA" get "$KEY" influence-radius
-
-# Examples:
-gsettings --schemadir "$SCHEMA" set "$KEY" magnification 0.85
-gsettings --schemadir "$SCHEMA" set "$KEY" influence-radius 140
+journalctl --user -b --no-pager | grep -i 'zorin-fisheye\|Zorin Fisheye' | tail -50
 ```
 
-Magnification `0.75` means up to 175% icon size. Radius is measured in GNOME logical pixels.
+If you are reporting a bug, include your **Zorin OS version, GNOME version, Wayland/X11 session, taskbar position, display scaling**, what you expected and what happened. Screenshots help too. [Open a GitHub issue](https://github.com/criger/zorinos-fisheye-taskbar/issues).
 
-## Development
+## How it works (for the curious)
 
-No runtime packages or Node dependencies are required. The extension runs as GJS inside GNOME Shell. Pure JavaScript math can be tested using Node:
+Zorin Taskbar continues to handle application and window behaviour. The extension reads taskbar icon positions and draws **non-interactive Clutter overlays** above the taskbar, using a cosine-based magnification curve. This avoids changing the panel's height or taking mouse and keyboard input away from the native taskbar. Settings are managed through GSettings and the GNOME Extensions preferences interface.
 
-```bash
-npm run check
-```
+The project is experimental and intended for people who want **Zorin OS taskbar icon magnification / macOS-style fisheye without installing a replacement dock**. Feedback, compatibility reports and pull requests are welcome.
 
-The schema can be checked on Zorin with:
+## Author and license
 
-```bash
-glib-compile-schemas --strict --dry-run schemas
-```
+Created and maintained by **Cristhian Gertner**. Copyright © 2026.
 
-Use `bash scripts/install-local.sh` for local iteration. If loading fails, look at GNOME Shell logs:
-
-```bash
-journalctl --user -b | grep -i 'zorin-fisheye'
-```
-
-### Manual testing
-
-**Observed on Zorin OS 18:** fisheye works with the tested bottom-positioned Zorin taskbar layouts, including non-Windows-style layouts. The left-side vertical layout did not magnify icons.
-
-**Additional regression tests still needed:**
-
-- Internal/external displays with different resolutions/scaling.
-- Full-width original taskbar and unchanged normal panel height.
-- Click, window previews, pinned/running apps and right-click menus.
-- Drag-and-drop from one window to another via native taskbar.
-- Disable/re-enable without residual behavior or visuals.
-- Monitor changes, logout/login, overview, fullscreen and autohide.
-- Hover then move the pointer outside the taskbar: the icon should revert **immediately**, not after 700 ms.
-- Add and remove running applications: icon clones must be created and destroyed without background polling.
-- Launch a **stopped** application from the taskbar: bounce should start just **after** native mouse click processing. Click an already-running app, or drag/release outside, and verify no bounce.
-- **Tooltip collision fix:** Zorin places its label relative to the native icon slot, while fisheye icons extend above it. We listen to the native label's show notification, defer repositioning until Zorin sets its position, and keep it a short gap above the visual icon while respecting monitor edges. The original Zorin label text, animations, hover timing and visibility remain owned by Zorin.
-- Check the mouse cursor after each launch: it must not keep a busy spinner when returning to the taskbar. If it persists, test with bounce disabled, then inspect `journalctl --user -b --no-pager | grep -F '[Zorin Fisheye]' | tail -30`. GNOME also legitimately shows a startup busy cursor until activation is complete, so do not indiscriminately override `Meta.Cursor`.
-- Compare standard HD, HiDef AA 1×/2×/3× and Pixel-perfect on the same original icon, including ChatGPT Chrome app white background. Confirm mutual exclusivity, smooth fractional AA fisheye versus deliberate stepped Pixel Perfect, tooltip, DnD, previews and bounce.
-- If bounce still fails, immediately inspect the extension's own event traces with `journalctl --user -b --no-pager | grep -F '[Zorin Fisheye]' | tail -30`. A `Launch press armed` line means the icon received the event; `Launch bounce from` means animation was requested; `Bounce skipped` points to a missing source actor/overview state.
-- Open preferences from Extension Manager and change zoom, influence radius, bounce toggle and height.
-- Verify native HD icons appear sharper again at 1.5× or 2×. Compare Chrome-app icon backgrounds with HD on/off: Chrome may have different PNG artwork at 32×32 and 128×128. To preserve only the ChatGPT Chrome app's white background without disabling HD globally, add its desktop ID (`chrome-cadlkienfkclaiaibeoongdcgmdikeeg-Default.desktop`) under native icon exceptions in preferences.
-- At magnification 0.00 (1×), the untouched Zorin icon should remain visible and the overlay should be hidden.
-
-Please report findings including Zorin, GNOME, display scale and session type.
-
-## Attribution and licensing
-
-Copyright © 2026 **Cristhian Gertner**.
-
-Licensed under **GNU GPL v3** (see [LICENSE](LICENSE)). Copyright and license notices must be retained in redistributed copies. Attribution in documentation is appreciated. Contact the copyright holder if you need a separate licensing arrangement.
-
-Zorin OS and GNOME are trademarks of their owners; this project is not affiliated with them.
+Distributed under the **GNU General Public License v3.0**; see [LICENSE](LICENSE). This is an independent community project, not affiliated with or endorsed by Zorin OS, GNOME or Apple. The names of those projects are used only to describe compatibility and the visual effect.
