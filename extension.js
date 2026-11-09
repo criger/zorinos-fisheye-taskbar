@@ -12,7 +12,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { magnificationFrame } from './magnification.js';
 import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
 import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from './launch-bounce.js';
-import { highResolutionSize, highResolutionPlacement } from './icon-rendering.js';
+import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
@@ -30,7 +30,6 @@ export default class ZorinFisheyeExtension extends Extension
         this._orphanBounces = new Set();
         this._panels = new Map();
         this._signals = [];
-        this._pendingLaunch = null;
         this._refreshIdleId = 0;
         this._manager = null;
         this._managerSignalId = 0;
@@ -71,19 +70,9 @@ export default class ZorinFisheyeExtension extends Extension
 
         this._connect(global.stage, 'captured-event', (_stage, event) =>
         {
-            if (event.type() === Clutter.EventType.BUTTON_PRESS)
-            {
-                this._captureLaunch(event);
-            }
-            else if (event.type() === Clutter.EventType.BUTTON_RELEASE)
-            {
-                // Occurs before native click activation and potential
-                // replacement of a pinned launcher with a running icon.
-                this._completeLaunch(event);
-            }
-            else if (event.type() === Clutter.EventType.MOTION ||
-                     event.type() === Clutter.EventType.ENTER ||
-                     event.type() === Clutter.EventType.LEAVE)
+            if (event.type() === Clutter.EventType.MOTION ||
+                event.type() === Clutter.EventType.ENTER ||
+                event.type() === Clutter.EventType.LEAVE)
             {
                 // Restore native icons on the first motion beyond the panel.
                 this._renderCurrentPointer();
@@ -111,6 +100,7 @@ export default class ZorinFisheyeExtension extends Extension
 
         for (const entry of this._entries.values())
         {
+            this._unwatchIcon(entry);
             entry.overlay.destroy();
         }
 
@@ -122,7 +112,6 @@ export default class ZorinFisheyeExtension extends Extension
 
         this._orphanBounces.clear();
         this._entries.clear();
-        this._pendingLaunch = null;
         this._entries = null;
         this._panels = null;
         this._settings = null;
@@ -273,8 +262,10 @@ export default class ZorinFisheyeExtension extends Extension
 
     _makeOverlay(appIcon, source, panel)
     {
-        const preferHighResolution = this._settings.get_boolean(
-            'high-resolution-icons');
+        const preferHighResolution = shouldUseHighResolution(
+            appIcon.app?.get_id?.(),
+            this._settings.get_boolean('high-resolution-icons'),
+            this._settings.get_string('native-icon-apps'));
         let overlay = null;
         let highResolution = false;
         let textureSize = 0;
@@ -358,9 +349,18 @@ export default class ZorinFisheyeExtension extends Extension
                 if (existing)
                 {
                     existing.panel = panel;
-                    existing.appIcon = appIcon;
-                    const preferHD = this._settings.get_boolean(
-                        'high-resolution-icons');
+
+                    if (existing.appIcon !== appIcon)
+                    {
+                        this._unwatchIcon(existing);
+                        existing.appIcon = appIcon;
+                        this._watchIcon(existing);
+                    }
+
+                    const preferHD = shouldUseHighResolution(
+                        appIcon.app?.get_id?.(),
+                        this._settings.get_boolean('high-resolution-icons'),
+                        this._settings.get_string('native-icon-apps'));
 
                     if (!existing.bouncing &&
                         existing.renderPreference !== preferHD)
@@ -389,13 +389,16 @@ export default class ZorinFisheyeExtension extends Extension
                     continue;
                 }
 
-                this._entries.set(source,
+                const entry =
                 {
                     panel, appIcon, source,
                     ...this._makeOverlay(appIcon, source, panel),
                     originalOpacity: null,
                     bouncing: false,
-                });
+                };
+
+                this._entries.set(source, entry);
+                this._watchIcon(entry);
             }
         }
 
@@ -403,6 +406,8 @@ export default class ZorinFisheyeExtension extends Extension
         {
             if (!discovered.has(source))
             {
+                this._unwatchIcon(entry);
+
                 if (entry.bouncing && entry.highResolution)
                 {
                     // A launcher may disappear when GNOME starts the app.
@@ -627,89 +632,134 @@ export default class ZorinFisheyeExtension extends Extension
         this._hide(this._entries.values(), force);
     }
 
-    _eventPosition(event)
+    _watchIcon(entry)
     {
-        const coords = event.get_coords?.();
+        const appIcon = entry.appIcon;
+        entry.iconSignals = [];
+        entry.launchArmed = false;
+        entry.launchPressed = false;
+        entry.launchPressedAt = 0;
 
-        if (Array.isArray(coords) && coords.length >= 2 &&
-            Number.isFinite(coords[0]) && Number.isFinite(coords[1]))
+        const press = (event) =>
         {
-            return coords;
-        }
+            entry.launchPressed = true;
+            entry.launchArmed = this._settings.get_boolean('bounce-enabled') &&
+                isStoppedClick(event.get_button(),
+                    appIcon.app.get_state(), Shell.AppState.STOPPED);
+            entry.launchPressedAt = GLib.get_monotonic_time();
 
-        return global.get_pointer();
-    }
-
-    _pointHitsActor(actor, x, y)
-    {
-        if (!actor?.get_stage?.())
-        {
-            return false;
-        }
-
-        const [actorX, actorY] = actor.get_transformed_position();
-        const [width, height] = actor.get_transformed_size();
-
-        return pointInsideActor(x, y, actorX, actorY, width, height);
-    }
-
-    _captureLaunch(event)
-    {
-        this._pendingLaunch = null;
-
-        if (!this._settings.get_boolean('bounce-enabled') ||
-            event.get_button() !== 1)
-        {
-            return;
-        }
-
-        // Some stage events have a null source actor; contains(null)
-        // throws in Clutter. Use event coordinates instead.
-        const [x, y] = this._eventPosition(event);
-
-        for (const entry of this._entries.values())
-        {
-            const app = entry.appIcon?.app;
-
-            if (app && this._pointHitsActor(entry.appIcon, x, y) &&
-                isStoppedClick(1, app.get_state(), Shell.AppState.STOPPED))
+            if (entry.launchArmed)
             {
-                this._pendingLaunch =
-                {
-                    entry,
-                    appIcon: entry.appIcon,
-                    pressedAt: GLib.get_monotonic_time(),
-                };
-                break;
+                console.log('[Zorin Fisheye] Launch press armed: ' +
+                    (appIcon.app?.get_id?.() ?? 'unknown-app'));
             }
+        };
+
+        const release = (event) =>
+        {
+            const [x, y] = event.get_coords?.() ?? global.get_pointer();
+            const [actorX, actorY] = appIcon.get_transformed_position();
+            const [width, height] = appIcon.get_transformed_size();
+            const releasedInside = pointInsideActor(
+                x, y, actorX, actorY, width, height);
+
+            const launch = releasedInside && entry.launchArmed &&
+                event.get_button() === 1 &&
+                !appIcon.isDragged &&
+                isFreshLaunch(entry.launchPressedAt,
+                    GLib.get_monotonic_time(), CLICK_WINDOW_US);
+
+            entry.launchArmed = false;
+
+            if (launch && this._settings.get_boolean('bounce-enabled'))
+            {
+                this._startLaunchBounce(entry, 'button-release');
+            }
+        };
+
+        // Capture on the *actual icon actor* before the St.Button class
+        // handles activation. The regular actor signals are fallbacks for
+        // GNOME/Zorin configurations with a different capture path.
+        this._connect(appIcon, 'captured-event', (_actor, event) =>
+        {
+            if (event.type() === Clutter.EventType.BUTTON_PRESS)
+            {
+                press(event);
+            }
+            else if (event.type() === Clutter.EventType.BUTTON_RELEASE)
+            {
+                release(event);
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        }, entry.iconSignals);
+
+        this._connect(appIcon, 'button-press-event', (_actor, event) =>
+        {
+            // Do not overwrite a capture-handler's STOPPED observation
+            // with a potentially already changed application state.
+            if (!entry.launchPressed)
+            {
+                press(event);
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        }, entry.iconSignals);
+
+        this._connect(appIcon, 'button-release-event', (_actor, event) =>
+        {
+            if (entry.launchArmed)
+            {
+                release(event);
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        }, entry.iconSignals);
+
+        // Keyboard activation / GNOME variants which don't deliver a
+        // matching mouse-release still emit St.Button.clicked.
+        this._connect(appIcon, 'clicked', () =>
+        {
+            if (entry.bouncing || !this._settings.get_boolean('bounce-enabled'))
+            {
+                entry.launchPressed = false;
+                entry.launchArmed = false;
+                return;
+            }
+
+            const launch = entry.launchPressed
+                ? entry.launchArmed
+                : appIcon.app.get_state() === Shell.AppState.STOPPED;
+
+            entry.launchPressed = false;
+            entry.launchArmed = false;
+
+            if (launch && !appIcon.isDragged)
+            {
+                this._startLaunchBounce(entry, 'clicked');
+            }
+        }, entry.iconSignals);
+    }
+
+    _unwatchIcon(entry)
+    {
+        if (entry.iconSignals)
+        {
+            this._disconnectSignals(entry.iconSignals);
+            entry.iconSignals = null;
         }
     }
 
-    _completeLaunch(event)
+    _startLaunchBounce(entry, signalName)
     {
-        const candidate = this._pendingLaunch;
-        this._pendingLaunch = null;
-
-        if (!candidate || event.get_button() !== 1 ||
-            !this._settings.get_boolean('bounce-enabled') ||
-            candidate.appIcon.isDragged ||
-            !isFreshLaunch(candidate.pressedAt,
-                GLib.get_monotonic_time(), CLICK_WINDOW_US))
+        if (this._entries?.get(entry.source) !== entry)
         {
             return;
         }
 
-        const [x, y] = this._eventPosition(event);
-
-        if (!this._pointHitsActor(candidate.appIcon, x, y))
-        {
-            return;
-        }
-
-        if (this._entries.get(candidate.entry.source) === candidate.entry)
-        {
-            this._bounce(candidate.entry);
-        }
+        console.log('[Zorin Fisheye] Launch bounce from ' + signalName +
+            ': ' + (entry.appIcon?.app?.get_id?.() ?? 'unknown-app'));
+        this._bounce(entry);
     }
 
     _cancelBounce(entry)
@@ -729,6 +779,8 @@ export default class ZorinFisheyeExtension extends Extension
         if (entry.bouncing || !entry.source.get_stage() ||
             Main.overview.visible)
         {
+            console.warn('[Zorin Fisheye] Bounce skipped: icon not staged, ' +
+                'animation active or overview visible');
             return;
         }
 

@@ -54,6 +54,14 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         settings.bind('high-resolution-icons', highResolutionRow, 'active',
             Gio.SettingsBindFlags.DEFAULT);
 
+        const nativeAppsRow = new Adw.EntryRow(
+        {
+            title: 'Apps keeping original icons (.desktop IDs)',
+        });
+        magnification.add(nativeAppsRow);
+        settings.bind('native-icon-apps', nativeAppsRow, 'text',
+            Gio.SettingsBindFlags.DEFAULT);
+
         const radiusRow = new Adw.SpinRow(
         {
             title: 'Influence radius',

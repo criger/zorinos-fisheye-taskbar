@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { highResolutionSize, highResolutionPlacement } from '../icon-rendering.js';
+import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from '../icon-rendering.js';
 
 test('larger icon textures are requested', () =>
 {
@@ -42,4 +42,18 @@ test('top and left positions preserve the source anchor', () =>
     });
     assert.equal(left.x, 0);
     assert.equal(left.y, 72);
+});
+
+test('native artwork override applies only to listed desktop IDs', () =>
+{
+    assert.equal(shouldUseHighResolution(
+        'chrome-abc-Default.desktop', true, ''), true);
+    assert.equal(shouldUseHighResolution(
+        'chrome-abc-Default.desktop', true, 'chrome-abc-Default'), false);
+    assert.equal(shouldUseHighResolution(
+        'chrome-abc-Default.desktop', true, 'other.desktop, chrome-abc-Default.desktop'), false);
+    assert.equal(shouldUseHighResolution(
+        'firefox.desktop', true, 'chrome-abc-Default.desktop'), true);
+    assert.equal(shouldUseHighResolution(
+        'firefox.desktop', false, ''), false);
 });

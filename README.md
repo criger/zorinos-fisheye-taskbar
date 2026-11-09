@@ -24,7 +24,7 @@ These are firsthand desktop observations, not a complete compatibility or regres
 - If the exact Zorin icon appearance matters more than sharpness, disable **High-resolution icons** in preferences to use a non-reactive `Clutter.Clone` of the native icon instead.
 - The visual overlay is prepared when icons are added to the taskbar, never loaded on every mouse movement. HD textures are scaled **down** into their intended footprint; the original-icon fallback uses native allocation. At exactly 1×, only Zorin's original icon is painted.
 - Child-added/removed and panel-created signals replace the former 700 ms polling. Leaving the taskbar restores the original icon immediately.
-- On a completed primary-button click on a **stopped** application, the icon begins bouncing immediately. Stage-space hit testing handles GNOME click events without a source actor (fixes `Argument descendant may not be null`). An independent HD overlay can finish bouncing even if Zorin replaces the launcher during startup. Focusing an already running application does not trigger a bounce. The effect indicates a launch attempt rather than confirmed process startup.
+- On a completed primary-button click on a **stopped** application, the icon begins bouncing. The extension now listens to Zorin's app icon `captured-event`, `button-press-event`, `button-release-event` and `clicked` signals directly, instead of relying on the global stage event's nullable source actor or hit-testing. Independent HD overlays can finish bouncing even if Zorin replaces the launcher. Already-running apps do not bounce; this indicates a launch attempt, not proof of successful startup.
 - A settings window is available from the extension's preferences button in Extension Manager.
 - No replacement taskbar, new autohide behavior or reserved-screen-area changes.
 - Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
@@ -79,7 +79,8 @@ Log out and back in to reload GNOME Shell's extension code, then enable it using
 Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** (the gear icon) to adjust:
 
 - Maximum icon magnification (1× to 2×).
-- High-resolution icon rendering (default on). Turn off to preserve the exact Zorin icon for apps whose large assets have a different background.
+- High-resolution icon rendering (default on). Turn it off globally to preserve the exact native artwork.
+- Native icon exceptions: specify app desktop IDs separated by commas to keep the original appearance for **only those apps**. This is useful when Chrome installed an opaque small PNG but a transparent large PNG. Such exceptions may look softer when enlarged; to get both HD sharpness and the same background, the application's high-resolution source asset must be corrected.
 - Influence radius (20–300 logical pixels).
 - Whether stopped applications bounce on launch.
 - Bounce height (4–40 logical pixels).
@@ -134,9 +135,10 @@ journalctl --user -b | grep -i 'zorin-fisheye'
 - Monitor changes, logout/login, overview, fullscreen and autohide.
 - Hover then move the pointer outside the taskbar: the icon should revert **immediately**, not after 700 ms.
 - Add and remove running applications: icon clones must be created and destroyed without background polling.
-- Launch a **stopped** application from the taskbar: the bounce should begin on mouse release, but clicking a running app must not bounce. Dragging or releasing outside the app icon must not bounce.
+- Launch a **stopped** application from the taskbar: bounce should start on mouse release (or native `clicked` fallback). Clicking an already-running app must not bounce. Dragging or releasing outside the app icon must not bounce.
+- If bounce still fails, immediately inspect the extension's own event traces with `journalctl --user -b --no-pager | grep -F '[Zorin Fisheye]' | tail -30`. A `Launch press armed` line means the icon received the event; `Launch bounce from` means animation was requested; `Bounce skipped` points to a missing source actor/overview state.
 - Open preferences from Extension Manager and change zoom, influence radius, bounce toggle and height.
-- Verify native HD icons appear sharper again at 1.5× or 2×. Compare Chrome-app icon backgrounds with HD on/off: Chrome may have different PNG artwork at 32×32 and 128×128, so original mode preserves its small-icon background at the expense of softness.
+- Verify native HD icons appear sharper again at 1.5× or 2×. Compare Chrome-app icon backgrounds with HD on/off: Chrome may have different PNG artwork at 32×32 and 128×128. To preserve only the ChatGPT Chrome app's white background without disabling HD globally, add its desktop ID (`chrome-cadlkienfkclaiaibeoongdcgmdikeeg-Default.desktop`) under native icon exceptions in preferences.
 - At magnification 0.00 (1×), the untouched Zorin icon should remain visible and the overlay should be hidden.
 
 Please report findings including Zorin, GNOME, display scale and session type.

@@ -11,6 +11,11 @@
       <summary>Prefer high-resolution application icon textures</summary>
       <description>Sharper enlarged icons, but some applications use different artwork in different icon sizes. When disabled, render a clone of the exact original Zorin Taskbar icon.</description>
     </key>
+    <key name="native-icon-apps" type="s">
+      <default>''</default>
+      <summary>Application IDs that should keep their original Zorin icon</summary>
+      <description>Comma-separated desktop IDs. Only listed apps use the original icon rather than a different high-resolution PNG variant.</description>
+    </key>
     <key name="influence-radius" type="i">
       <default>120</default>
       <summary>Influence radius in logical pixels</summary>

@@ -30,3 +30,22 @@ export function highResolutionPlacement(
         scaleY: drawHeight / textureSize,
     };
 }
+
+// The application may expose different PNG artwork in different sizes.
+// Exceptions are app desktop IDs, optionally written without '.desktop'.
+export function shouldUseHighResolution(appId, enabled, nativeIconApps)
+{
+    if (!enabled)
+    {
+        return false;
+    }
+
+    const normalize = (id) => id.trim().replace(/\.desktop$/i, '');
+    const target = normalize(String(appId ?? ''));
+
+    return !String(nativeIconApps ?? '')
+        .split(/[\n,;]+/)
+        .map(normalize)
+        .filter(Boolean)
+        .includes(target);
+}

@@ -84,6 +84,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const app = {
         state: 0,
         get_state() { return this.state; },
+        get_id() { return 'chatgpt.desktop'; },
         create_icon_texture(size)
         {
             const actor = new Clone({ source: null });
@@ -151,8 +152,10 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     let zoom = 0.5;
     settings.get_double = () => zoom;
     let useHD = true;
+    let nativeIconApps = '';
     settings.get_boolean = (key) =>
         key === 'high-resolution-icons' ? useHD : true;
+    settings.get_string = () => nativeIconApps;
     class Extension
     {
         getSettings() { return settings; }
@@ -182,13 +185,15 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         launchBounce + '\n' + iconGeometry + '\n' + iconRendering + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
         'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
-        'clonePlacement, highResolutionSize, highResolutionPlacement};')();
+        'clonePlacement, highResolutionSize, highResolutionPlacement, ' +
+        'shouldUseHighResolution};')();
 
     const ExtensionType = new Function(
         'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
-        ...Object.keys(functions),
+        'console', ...Object.keys(functions),
         sourceCode + '\nreturn ZorinFisheyeExtension;')(
         Clutter, GLib, Shell, St, Main, Extension, shellGlobal,
+        { log() {}, warn() {} },
         ...Object.values(functions));
 
     const extension = new ExtensionType();
@@ -223,6 +228,14 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(extension._entries.get(source).highResolution, true);
     assert.equal(extension._entries.get(source).overlay.hd, true);
 
+    // Per-app exception preserves native artwork on this one Chrome app.
+    nativeIconApps = 'chatgpt.desktop';
+    settings.emit('changed');
+    assert.equal(extension._entries.get(source).highResolution, false);
+    nativeIconApps = '';
+    settings.emit('changed');
+    assert.equal(extension._entries.get(source).highResolution, true);
+
     pointer = [100, 800];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 255, 'first movement outside must restore');
@@ -244,39 +257,67 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(extension._entries.size, 2);
 
     const press = {
-        type: () => Clutter.EventType.BUTTON_PRESS,
         get_button: () => 1,
-        get_source: () => null,
         get_coords: () => [100, 1010],
     };
     const release = {
-        type: () => Clutter.EventType.BUTTON_RELEASE,
         get_button: () => 1,
-        get_source: () => null,
         get_coords: () => [100, 1010],
     };
     const clone = extension._entries.get(source).overlay;
-    stage.emit('captured-event', press);
+
+    // Previously the global stage handler threw on get_source() === null.
+    stage.emit('captured-event', {
+        type: () => Clutter.EventType.BUTTON_PRESS,
+        get_button: () => 1,
+        get_source: () => null,
+    });
+
+    // The native appIcon actor now owns press/release/click detection.
+    icon.emit('button-press-event', press);
     assert.equal(clone.bounceSteps, 0, 'press alone must not bounce');
-    stage.emit('captured-event', release);
+    icon.emit('button-release-event', release);
+    icon.emit('clicked');
     assert.equal(clone.bounceSteps, 4,
-        'a completed left-click on stopped app starts bounce');
+        'completed click on stopped app starts one bounce sequence');
 
     app.state = Shell.AppState.RUNNING;
-    stage.emit('captured-event', press);
-    stage.emit('captured-event', release);
+    icon.emit('button-press-event', press);
+    icon.emit('button-release-event', release);
+    icon.emit('clicked');
     assert.equal(clone.bounceSteps, 4, 'running app must not bounce');
 
     app.state = Shell.AppState.STOPPED;
-    stage.emit('captured-event', press);
-    stage.emit('captured-event', {
-        type: () => Clutter.EventType.BUTTON_RELEASE,
+    icon.emit('button-press-event', press);
+    icon.emit('button-release-event', {
         get_button: () => 1,
-        get_source: () => null,
         get_coords: () => [150, 1010],
     });
     assert.equal(clone.bounceSteps, 4,
-        'releasing over another actor must not bounce');
+        'releasing outside app actor must not bounce');
+
+    // A cancelled mouse press cannot be mistaken for a keyboard launch.
+    icon.emit('clicked');
+    assert.equal(clone.bounceSteps, 4,
+        'cancelled mouse press must not be mistaken for keyboard launch');
+
+    // Zorin/Clutter may deliver both capture and ordinary actor signals.
+    // They represent one action and must never start two animations.
+    icon.emit('captured-event', {
+        type: () => Clutter.EventType.BUTTON_PRESS,
+        get_button: () => 1,
+        get_coords: () => [100, 1010],
+    });
+    icon.emit('button-press-event', press);
+    icon.emit('captured-event', {
+        type: () => Clutter.EventType.BUTTON_RELEASE,
+        get_button: () => 1,
+        get_coords: () => [100, 1010],
+    });
+    icon.emit('button-release-event', release);
+    icon.emit('clicked');
+    assert.equal(clone.bounceSteps, 8,
+        'captured+native signals trigger exactly one bounce sequence');
 
     icons = [icon];
     box.emit('child-removed', secondIcon);
