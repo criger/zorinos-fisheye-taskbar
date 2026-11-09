@@ -6,10 +6,30 @@
       <summary>Maximum additional icon scale</summary>
       <description>0.75 means the icon can reach 175% of normal size.</description>
     </key>
+    <key name="high-resolution-icons" type="b">
+      <default>true</default>
+      <summary>Prefer high-resolution application icon textures</summary>
+      <description>Sharper enlarged icons, but some applications use different artwork in different icon sizes. When disabled, render a clone of the exact original Zorin Taskbar icon.</description>
+    </key>
+    <key name="native-icon-apps" type="s">
+      <default>''</default>
+      <summary>Application IDs that should keep their original Zorin icon</summary>
+      <description>Comma-separated desktop IDs. Only listed apps use the original icon rather than a different high-resolution PNG variant.</description>
+    </key>
     <key name="influence-radius" type="i">
       <default>120</default>
       <summary>Influence radius in logical pixels</summary>
       <description>How far away the cursor influences adjacent icons.</description>
+    </key>
+    <key name="bounce-enabled" type="b">
+      <default>true</default>
+      <summary>Bounce when a stopped application is launched from the taskbar</summary>
+      <description>Do not bounce when switching to running applications.</description>
+    </key>
+    <key name="bounce-height" type="i">
+      <default>14</default>
+      <summary>Distance of the launch bounce in logical pixels</summary>
+      <description>The animated icon moves away from the taskbar edge.</description>
     </key>
   </schema>
 </schemalist>
