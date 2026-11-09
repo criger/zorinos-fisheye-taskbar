@@ -36,6 +36,7 @@ The initial target is **Zorin OS 18 with GNOME Shell 46** and Zorin Taskbar enab
 Open Terminal and run:
 
 ```bash
+cd ~
 git clone https://github.com/criger/zorinos-fisheye-taskbar.git
 cd zorinos-fisheye-taskbar
 bash scripts/install-local.sh
