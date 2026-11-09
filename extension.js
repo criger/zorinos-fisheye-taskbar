@@ -15,6 +15,7 @@ import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from '.
 import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
 import { pixelPerfectScale, findOriginalIconContent } from './pixel-scaling.js';
+import { tooltipPosition } from './tooltip-position.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
 const CLICK_WINDOW_US = 2_000_000;
@@ -605,6 +606,8 @@ export default class ZorinFisheyeExtension extends Extension
                     ? pixelPerfectScale(scales[index])
                     : scales[index];
 
+                entry.currentScale = scale;
+
                 if (scale < MIN_VISIBLE_MAGNIFICATION)
                 {
                     hideMagnifiedIcon(entry);
@@ -619,6 +622,7 @@ export default class ZorinFisheyeExtension extends Extension
                     pivotX, pivotY))
                 {
                     showMagnifiedIcon(entry);
+                    this._positionTooltip(entry);
                 }
             });
         }
@@ -662,6 +666,91 @@ export default class ZorinFisheyeExtension extends Extension
         return true;
     }
 
+    _scheduleTooltipPosition(entry)
+    {
+        if (entry.tooltipIdleId || !this._entries)
+        {
+            return;
+        }
+
+        // Zorin calls label.show() BEFORE set_position(), so applying
+        // placement synchronously on notify::visible would be overwritten.
+        this._scheduleTooltipIdle(entry);
+    }
+
+    _scheduleTooltipIdle(entry)
+    {
+        entry.tooltipIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () =>
+        {
+            entry.tooltipIdleId = 0;
+            if (this._entries?.get(entry.source) === entry)
+            {
+                this._positionTooltip(entry);
+            }
+
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _positionTooltip(entry)
+    {
+        const item = entry.appIcon?._dashItemContainer;
+        const label = item?.label;
+
+        // Zorin continues to own the tooltip's visibility, fade,
+        // accessible text and native hover timeout.
+        if (!label?.visible || !entry.appIcon.hover ||
+            !entry.source.get_stage() ||
+            (entry.currentScale ?? 1) < MIN_VISIBLE_MAGNIFICATION)
+        {
+            return;
+        }
+
+        const [x, y] = entry.source.get_transformed_position();
+        const [width, height] = entry.source.get_transformed_size();
+        const [labelWidth, labelHeight] = label.get_size();
+        const side = entry.panel.geom?.position;
+        const vertical = Boolean(entry.panel.geom?.vertical);
+        const pivotX = vertical
+            ? (side === St.Side.RIGHT ? 1 : 0) : 0.5;
+        const pivotY = vertical
+            ? 0.5 : (side === St.Side.TOP ? 0 : 1);
+        const monitor = Main.layoutManager.findMonitorForActor?.(
+            entry.appIcon) ?? null;
+        const position = tooltipPosition(
+        {
+            side: side === St.Side.TOP ? 'top' :
+                side === St.Side.LEFT ? 'left' :
+                side === St.Side.RIGHT ? 'right' : 'bottom',
+            x, y, width, height,
+            labelWidth, labelHeight, pivotX, pivotY,
+            scale: entry.currentScale,
+            monitor,
+        });
+
+        if (!position)
+        {
+            return;
+        }
+
+        const [labelX, labelY] = label.get_position();
+
+        if (labelX !== position.x || labelY !== position.y)
+        {
+            label.set_position(position.x, position.y);
+        }
+
+        // Our enlarged icon lives in Main.uiGroup, potentially ABOVE the
+        // native chrome tooltip. Raise the native label in its own parent
+        // once per appearance so the overlay cannot cover the text.
+        if (!entry.tooltipRaised)
+        {
+            const parent = label.get_parent?.();
+            parent?.set_child_above_sibling?.(label, null);
+            entry.tooltipRaised = true;
+        }
+    }
+
     _hidePanel(panel)
     {
         this._hide([...this._entries.values()].filter(
@@ -695,6 +784,25 @@ export default class ZorinFisheyeExtension extends Extension
     {
         const appIcon = entry.appIcon;
         entry.iconSignals = [];
+        entry.tooltipRaised = false;
+        entry.tooltipIdleId = 0;
+
+        const label = appIcon._dashItemContainer?.label;
+
+        if (label)
+        {
+            this._connect(label, 'notify::visible', () =>
+            {
+                if (label.visible)
+                {
+                    this._scheduleTooltipPosition(entry);
+                }
+                else
+                {
+                    entry.tooltipRaised = false;
+                }
+            }, entry.iconSignals);
+        }
 
         // St.Icon creates/replaces its inner image-content child when a
         // texture finishes loading or the icon theme changes. Refresh the
@@ -818,6 +926,12 @@ export default class ZorinFisheyeExtension extends Extension
 
     _unwatchIcon(entry)
     {
+        if (entry.tooltipIdleId)
+        {
+            GLib.Source.remove(entry.tooltipIdleId);
+            entry.tooltipIdleId = 0;
+        }
+
         if (entry.iconSignals)
         {
             this._disconnectSignals(entry.iconSignals);

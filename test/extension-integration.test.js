@@ -45,6 +45,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         get_transformed_position() { return [this.x, this.y]; }
         get_transformed_size() { return [this.w, this.h]; }
         get_size() { return [this.w, this.h]; }
+        get_position() { return [this.x, this.y]; }
+        set_position(x, y) { this.x = x; this.y = y; }
         get_opacity() { return this.opacity; }
         set_opacity(value) { this.opacity = value; }
     }
@@ -109,6 +111,19 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const icon = new Actor(87, 992, 40, 40);
     icon.app = app;
     icon.icon = { _iconBin: source };
+    icon.hover = false;
+    const label = new Actor(60, 950, 130, 28);
+    label.visible = false;
+    let tooltipRaised = 0;
+    label.get_parent = () => ({
+        set_child_above_sibling(actor, sibling)
+        {
+            assert.equal(actor, label);
+            assert.equal(sibling, null);
+            tooltipRaised++;
+        },
+    });
+    icon._dashItemContainer = { label };
     let icons = [icon];
 
     const panel = {
@@ -199,16 +214,20 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const pixelScaling = readFileSync(
         new URL('../pixel-scaling.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const tooltipPositionSource = readFileSync(
+        new URL('../tooltip-position.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
 
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
         launchBounce + '\n' + iconGeometry + '\n' +
-        iconRendering + '\n' + pixelScaling + '\nreturn {' +
+        iconRendering + '\n' + pixelScaling + '\n' +
+        tooltipPositionSource + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
         'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
         'clonePlacement, highResolutionSize, highResolutionPlacement, ' +
         'shouldUseHighResolution, pixelPerfectScale, ' +
-        'findOriginalIconContent};')();
+        'findOriginalIconContent, tooltipPosition};')();
 
     const ExtensionType = new Function(
         'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
@@ -224,8 +243,36 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     assert.equal(idle.length, 0);
 
     pointer = [100, 1010];
+    icon.hover = true;
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 0);
+
+    // Zorin calls show() before setting the tooltip's native position.
+    // We must wait until after its showLabel() call has finished.
+    label.visible = true;
+    label.emit('notify::visible');
+    label.set_position(60, 955);
+    assert.equal(idle.length, 1, 'tooltip correction scheduled once');
+    idle.shift()();
+    const expectedTooltip = functions.tooltipPosition({
+        side: 'bottom',
+        x: source.x, y: source.y, width: source.w, height: source.h,
+        labelWidth: label.w, labelHeight: label.h,
+        pivotX: 0.5, pivotY: 1,
+        scale: extension._entries.get(source).currentScale,
+    });
+    assert.equal(label.y, expectedTooltip.y,
+        'tooltip clears enlarged icon even without pointer motion');
+    assert.equal(label.x, expectedTooltip.x);
+    assert.equal(tooltipRaised, 1,
+        'native tooltip label is above the fisheye overlay');
+    pointer = [101, 1010];
+    stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+    assert.equal(tooltipRaised, 1,
+        'do not reorder chrome layers on each mouse movement');
+    label.visible = false;
+    label.emit('notify::visible');
+    assert.equal(extension._entries.get(source).tooltipRaised, false);
     const hoverClone = extension._entries.get(source).overlay;
     assert.equal(extension._entries.get(source).highResolution, true);
     assert.equal(hoverClone.hd, true);

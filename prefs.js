@@ -56,8 +56,8 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
 
         const pixelPerfectRow = new Adw.SwitchRow(
         {
-            title: 'Pixel-perfect 2× (nearest-neighbor)',
-            subtitle: 'Scale the original taskbar icon to 1× or 2× without blur. Overrides HD and native-icon exceptions. Magnification should be at least 0.50.',
+            title: 'Pixel-perfect 2× — HIGHLY EXPERIMENTAL',
+            subtitle: 'Intentionally blocky on modern icons. Nearest-neighbor 1×/2× from the original pixels; overrides HD.',
         });
         magnification.add(pixelPerfectRow);
         settings.bind('pixel-perfect-icons', pixelPerfectRow, 'active',
