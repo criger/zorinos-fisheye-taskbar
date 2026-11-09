@@ -58,11 +58,65 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         const pixelPerfectRow = new Adw.SwitchRow(
         {
             title: 'Pixel-perfect 2× — HIGHLY EXPERIMENTAL',
-            subtitle: 'Intentionally blocky on modern icons. Nearest-neighbor 1×/2× from the original pixels; overrides HD.',
+            subtitle: 'Intentionally blocky original pixels at 1×/2×. Disables HiDef AA and overrides HD.',
         });
         magnification.add(pixelPerfectRow);
         settings.bind('pixel-perfect-icons', pixelPerfectRow, 'active',
             Gio.SettingsBindFlags.DEFAULT);
+
+        const hiDefAaRow = new Adw.SwitchRow(
+        {
+            title: 'HiDef AA — HIGHLY EXPERIMENTAL',
+            subtitle: 'Smooth original-icon fisheye. Choose 1×/2×/3× AA; disables Pixel Perfect.',
+        });
+        magnification.add(hiDefAaRow);
+        settings.bind('hidef-aa-icons', hiDefAaRow, 'active',
+            Gio.SettingsBindFlags.DEFAULT);
+
+        // Selecting one experimental mode always turns off the other.
+        pixelPerfectRow.connect('notify::active', () =>
+        {
+            if (pixelPerfectRow.active &&
+                settings.get_boolean('hidef-aa-icons'))
+            {
+                settings.set_boolean('hidef-aa-icons', false);
+            }
+        });
+        hiDefAaRow.connect('notify::active', () =>
+        {
+            if (hiDefAaRow.active &&
+                settings.get_boolean('pixel-perfect-icons'))
+            {
+                settings.set_boolean('pixel-perfect-icons', false);
+            }
+        });
+
+        const aaLevelRow = new Adw.SpinRow(
+        {
+            title: 'HiDef AA quality',
+            subtitle: '1× linear; 2×/3× use an offscreen filtering pass with higher GPU cost.',
+            adjustment: new Gtk.Adjustment(
+            {
+                lower: 1,
+                upper: 3,
+                step_increment: 1,
+                page_increment: 1,
+            }),
+            digits: 0,
+        });
+        magnification.add(aaLevelRow);
+        aaLevelRow.set_value(settings.get_int('hidef-aa-level'));
+        aaLevelRow.connect('notify::value', () =>
+        {
+            settings.set_int('hidef-aa-level',
+                Math.round(aaLevelRow.get_value()));
+        });
+        const updateAaSensitivity = () =>
+        {
+            aaLevelRow.sensitive = settings.get_boolean('hidef-aa-icons');
+        };
+        settings.connect('changed::hidef-aa-icons', updateAaSensitivity);
+        updateAaSensitivity();
 
         const radiusRow = new Adw.SpinRow(
         {

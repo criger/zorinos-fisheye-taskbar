@@ -71,6 +71,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         {
             this.contentFilters = { min, mag };
         }
+        add_child(child) { this.children = [child]; }
+        set_offscreen_redirect(value) { this.offscreen_redirect = value; }
         get_content() { return this.content ?? null; }
         set_icon_size(size) { this.w = size; this.h = size; }
         set_translation() {}
@@ -202,7 +204,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         EventType: { MOTION: 1, ENTER: 2, LEAVE: 3, BUTTON_PRESS: 4, BUTTON_RELEASE: 5 },
         EVENT_PROPAGATE: false,
         ScalingFilter: { NEAREST: 'nearest', LINEAR: 'linear' },
-        OffscreenRedirect: { NEVER: 'never' },
+        OffscreenRedirect: { NEVER: 'never', ALWAYS: 'always' },
         AnimationMode: { EASE_OUT_QUAD: 1, EASE_IN_QUAD: 2 },
     };
     const Shell = {
@@ -225,15 +227,29 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     };
 
     const settings = new Emitter();
-    settings.get_int = (key) => key === 'influence-radius' ? 120 : 14;
+    let aaLevel = 1;
+    settings.get_int = (key) => key === 'influence-radius' ? 120 :
+        key === 'hidef-aa-level' ? aaLevel : 14;
     let zoom = 0.5;
     settings.get_double = () => zoom;
     let useHD = true;
     let pixelPerfect = false;
+    let hiDefAA = false;
     let nativeIconApps = '';
     settings.get_boolean = (key) =>
         key === 'high-resolution-icons' ? useHD :
-        key === 'pixel-perfect-icons' ? pixelPerfect : true;
+        key === 'pixel-perfect-icons' ? pixelPerfect :
+        key === 'hidef-aa-icons' ? hiDefAA : true;
+    settings.set_boolean = (key, value) =>
+    {
+        if (key === 'pixel-perfect-icons')
+            pixelPerfect = value;
+        else if (key === 'hidef-aa-icons')
+            hiDefAA = value;
+        else
+            throw new Error('Unexpected boolean setting write: ' + key);
+        settings.emit('changed', key);
+    };
     settings.get_string = () => nativeIconApps;
     let iconOverrides = {};
     let taskbarApps = [];
@@ -284,6 +300,9 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const pixelScaling = readFileSync(
         new URL('../pixel-scaling.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const aaSource = readFileSync(
+        new URL('../hidef-aa.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
     const tooltipPositionSource = readFileSync(
         new URL('../tooltip-position.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
@@ -294,13 +313,13 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
         launchBounce + '\n' + iconGeometry + '\n' +
-        iconRendering + '\n' + pixelScaling + '\n' +
+        iconRendering + '\n' + pixelScaling + '\n' + aaSource + '\n' +
         tooltipPositionSource + '\n' + overridesSource + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
         'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
         'clonePlacement, highResolutionSize, highResolutionPlacement, ' +
         'shouldUseHighResolution, pixelPerfectScale, ' +
-        'findOriginalIconContent, tooltipPosition, ' +
+        'findOriginalIconContent, renderingMode, aaBufferFactor, tooltipPosition, ' +
         'normalizeTaskbarApps, iconOverrideFor, appRowsToVariant};')();
 
     const ExtensionType = new Function(
@@ -471,6 +490,52 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     pixelPerfect = false;
     settings.emit('changed');
     assert.equal(extension._entries.get(source).highResolution, true);
+
+    hiDefAA = true;
+    settings.emit('changed', 'hidef-aa-icons');
+    let aaEntry = extension._entries.get(source);
+    assert.equal(aaEntry.hiDefAA, true);
+    assert.equal(aaEntry.pixelPerfect, false);
+    assert.equal(aaEntry.highResolution, false);
+    assert.equal(aaEntry.contentActor.get_content(), newPixels,
+        'AA shares the exact original icon texture');
+    assert.deepEqual(aaEntry.contentActor.contentFilters,
+        { min: Clutter.ScalingFilter.LINEAR,
+          mag: Clutter.ScalingFilter.LINEAR });
+    zoom = 0.75;
+    pointer = [106, 1010];
+    stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+    assert.ok(aaEntry.overlay.scaleX > 1 && aaEntry.overlay.scaleX < 2,
+        'AA 1x must preserve fractional fisheye');
+
+    for (const level of [2, 3])
+    {
+        aaLevel = level;
+        settings.emit('changed', 'hidef-aa-level');
+        aaEntry = extension._entries.get(source);
+        assert.equal(aaEntry.aaFactor, level);
+        assert.equal(aaEntry.overlay.offscreen_redirect,
+            Clutter.OffscreenRedirect.ALWAYS);
+        assert.equal(aaEntry.overlay.children[0], aaEntry.contentActor);
+        stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+        assert.equal(aaEntry.contentActor.w, aaEntry.overlay.w);
+        assert.ok(aaEntry.overlay.scaleX > 0 && aaEntry.overlay.scaleX < 1,
+            'oversized buffer is scaled down to normal footprint');
+    }
+
+    pixelPerfect = true;
+    settings.emit('changed', 'pixel-perfect-icons');
+    assert.equal(hiDefAA, false, 'Pixel Perfect disables active HiDef AA');
+    assert.equal(extension._entries.get(source).pixelPerfect, true);
+    hiDefAA = true;
+    settings.emit('changed', 'hidef-aa-icons');
+    assert.equal(pixelPerfect, false, 'HiDef AA disables active Pixel Perfect');
+    assert.equal(extension._entries.get(source).hiDefAA, true);
+    hiDefAA = false;
+    settings.emit('changed', 'hidef-aa-icons');
+    zoom = 0.5;
+    assert.equal(extension._entries.get(source).highResolution, true,
+        'disabling both experimental modes restores HD default');
 
     pointer = [100, 800];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });

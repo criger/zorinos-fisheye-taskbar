@@ -16,6 +16,7 @@ import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from '.
 import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
 import { pixelPerfectScale, findOriginalIconContent } from './pixel-scaling.js';
+import { renderingMode, aaBufferFactor } from './hidef-aa.js';
 import { tooltipPosition } from './tooltip-position.js';
 import {
     normalizeTaskbarApps, iconOverrideFor, appRowsToVariant,
@@ -47,6 +48,20 @@ export default class ZorinFisheyeExtension extends Extension
             // Prevent a Shell -> prefs GSettings write from recursing.
             if (key === 'taskbar-apps')
                 return;
+
+            // Enforce exclusive modes even when changed outside preferences.
+            if ((key === 'pixel-perfect-icons' || key === 'hidef-aa-icons') &&
+                this._settings.get_boolean(key))
+            {
+                const other = key === 'pixel-perfect-icons'
+                    ? 'hidef-aa-icons' : 'pixel-perfect-icons';
+
+                if (this._settings.get_boolean(other))
+                {
+                    this._settings.set_boolean(other, false);
+                    return;
+                }
+            }
 
             if (!this._settings.get_boolean('bounce-enabled'))
             {
@@ -428,44 +443,74 @@ export default class ZorinFisheyeExtension extends Extension
     _makeOverlay(appIcon, source, panel)
     {
         const overridePath = this._customIconPath(appIcon.app?.get_id?.());
-        const pixelPerfect = this._settings.get_boolean('pixel-perfect-icons');
-        const preferHighResolution = !pixelPerfect && shouldUseHighResolution(
-            appIcon.app?.get_id?.(),
-            this._settings.get_boolean('high-resolution-icons'),
-            this._settings.get_string('native-icon-apps'));
+        const mode = renderingMode(
+            this._settings.get_boolean('pixel-perfect-icons'),
+            this._settings.get_boolean('hidef-aa-icons'));
+        const pixelPerfect = mode === 'pixel-perfect';
+        const hiDefAA = mode === 'hidef-aa';
+        const originalContentMode = pixelPerfect || hiDefAA;
+        const aaFactor = hiDefAA
+            ? aaBufferFactor(this._settings.get_int('hidef-aa-level')) : 1;
+        const preferHighResolution = !originalContentMode &&
+            shouldUseHighResolution(
+                appIcon.app?.get_id?.(),
+                this._settings.get_boolean('high-resolution-icons'),
+                this._settings.get_string('native-icon-apps'));
         const renderPreference = pixelPerfect
             ? 'pixel-perfect:' + overridePath
-            : overridePath ? 'file:' + overridePath
-                : preferHighResolution ? 'hd' : 'original';
+            : hiDefAA ? 'hidef-aa:' + aaFactor + ':' + overridePath
+                : overridePath ? 'file:' + overridePath
+                    : preferHighResolution ? 'hd' : 'original';
         let overlay = null;
         let highResolution = false;
         let pixelContent = false;
+        let contentActor = null;
         let textureSize = 0;
 
-        if (pixelPerfect)
+        if (originalContentMode)
         {
-            // GNOME Shell 46's St.Icon paints a child ClutterActor with
-            // the exact loaded image content. Share that *same object*,
-            // rather than asking the icon theme for a different PNG size.
+            // Share exactly the already-loaded original Zorin icon texture.
+            // Never request a size-dependent alternative icon image.
             const content = findOriginalIconContent(source);
 
             if (content)
             {
-                overlay = new Clutter.Actor(
+                contentActor = new Clutter.Actor(
                 {
                     content,
                     reactive: false,
-                    visible: false,
+                    visible: true,
                 });
 
-                overlay.set_content_scaling_filters(
-                    Clutter.ScalingFilter.NEAREST,
-                    Clutter.ScalingFilter.NEAREST);
+                const filter = pixelPerfect
+                    ? Clutter.ScalingFilter.NEAREST
+                    : Clutter.ScalingFilter.LINEAR;
+                contentActor.set_content_scaling_filters(filter, filter);
+
+                if (hiDefAA && aaFactor > 1)
+                {
+                    // Experimental two-pass interpolation: draw the original
+                    // into a 2x/3x offscreen buffer, then scale back down.
+                    // It cannot invent detail absent from the source raster.
+                    overlay = new Clutter.Actor(
+                    {
+                        reactive: false,
+                        visible: false,
+                    });
+                    overlay.add_child(contentActor);
+                    overlay.set_offscreen_redirect(
+                        Clutter.OffscreenRedirect.ALWAYS);
+                }
+                else
+                {
+                    overlay = contentActor;
+                }
+
                 pixelContent = true;
             }
         }
 
-        if (!overlay && overridePath && !pixelPerfect)
+        if (!overlay && overridePath && !originalContentMode)
         {
             textureSize = this._iconTextureSize(source, panel);
             overlay = new St.Icon(
@@ -533,6 +578,9 @@ export default class ZorinFisheyeExtension extends Extension
             textureSize,
             renderPreference,
             pixelPerfect,
+            hiDefAA,
+            aaFactor,
+            contentActor,
             pixelContent,
         };
     }
@@ -581,27 +629,34 @@ export default class ZorinFisheyeExtension extends Extension
                         this._watchIcon(existing);
                     }
 
-                    const pixelPerfect = this._settings.get_boolean(
-                        'pixel-perfect-icons');
-                    const preferHD = !pixelPerfect && shouldUseHighResolution(
-                        appIcon.app?.get_id?.(),
-                        this._settings.get_boolean('high-resolution-icons'),
-                        this._settings.get_string('native-icon-apps'));
-                    const renderPreference = pixelPerfect
+                    const mode = renderingMode(
+                        this._settings.get_boolean('pixel-perfect-icons'),
+                        this._settings.get_boolean('hidef-aa-icons'));
+                    const originalContentMode = mode !== 'standard';
+                    const aaFactor = mode === 'hidef-aa'
+                        ? aaBufferFactor(this._settings.get_int('hidef-aa-level'))
+                        : 1;
+                    const preferHD = !originalContentMode &&
+                        shouldUseHighResolution(
+                            appIcon.app?.get_id?.(),
+                            this._settings.get_boolean('high-resolution-icons'),
+                            this._settings.get_string('native-icon-apps'));
+                    const renderPreference = mode === 'pixel-perfect'
                         ? 'pixel-perfect:' + overridePath
-                        : overridePath ? 'file:' + overridePath
-                            : preferHD ? 'hd' : 'original';
+                        : mode === 'hidef-aa'
+                            ? 'hidef-aa:' + aaFactor + ':' + overridePath
+                            : overridePath ? 'file:' + overridePath
+                                : preferHD ? 'hd' : 'original';
 
-                    // If a texture becomes available later, replace the
-                    // experimental clone fallback with true pixel content.
-                    const liveContent = pixelPerfect
+                    // Refresh either original-content method when texture changes.
+                    const liveContent = originalContentMode
                         ? findOriginalIconContent(source) : null;
-                    const contentReady = pixelPerfect &&
+                    const contentReady = originalContentMode &&
                         !existing.pixelContent && Boolean(liveContent);
-                    const contentChanged = pixelPerfect &&
+                    const contentChanged = originalContentMode &&
                         existing.pixelContent &&
-                        existing.overlay.get_content?.() !== liveContent;
-                    const hdNotReady = !pixelPerfect &&
+                        existing.contentActor?.get_content?.() !== liveContent;
+                    const hdNotReady = !originalContentMode &&
                         (Boolean(overridePath) || preferHD) &&
                         !existing.highResolution && source.get_stage();
 
@@ -850,10 +905,18 @@ export default class ZorinFisheyeExtension extends Extension
             return false;
         }
 
+        // Offscreen quality affects raster sampling, not final icon size.
+        const factor = entry.hiDefAA && entry.pixelContent
+            ? entry.aaFactor : 1;
+        const drawWidth = placement.width * factor;
+        const drawHeight = placement.height * factor;
         entry.overlay.set_pivot_point(0, 0);
         entry.overlay.set_position(placement.x, placement.y);
-        entry.overlay.set_size(placement.width, placement.height);
-        entry.overlay.set_scale(placement.scaleX, placement.scaleY);
+        entry.overlay.set_size(drawWidth, drawHeight);
+        if (factor > 1)
+            entry.contentActor.set_size(drawWidth, drawHeight);
+        entry.overlay.set_scale(
+            placement.scaleX / factor, placement.scaleY / factor);
         return true;
     }
 
