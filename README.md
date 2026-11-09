@@ -21,9 +21,9 @@ These are firsthand desktop observations, not a complete compatibility or regres
 - Zorin Taskbar retains responsibility for clicks, drag-and-drop, previews, app management and window switching.
 - Icons nearest the pointer grow; nearby icons grow less, using a cosine falloff.
 - A non-reactive Clutter clone of the **exact existing Zorin icon** draws above the taskbar, avoiding clipping and preventing icon variants from unexpectedly changing colors or transparency.
-- Clones are prepared when icons are added to the taskbar, not loaded on every mouse movement.
+- Clones are prepared when icons are added to the taskbar, not loaded on every mouse movement. Each clone keeps the original icon's native allocation; zoom is applied in one stage transform, with placement snapped to device-pixel positions. At exactly 1×, only Zorin's original icon is painted.
 - Child-added/removed and panel-created signals replace the former 700 ms polling. Leaving the taskbar restores the original icon immediately.
-- On a primary click that launches a **stopped** application, the icon bounces briefly; focusing an already running application does not trigger a bounce.
+- On a completed primary-button click on a **stopped** application, the icon begins bouncing immediately before Zorin replaces the launcher actor. Focusing an already running application does not trigger a bounce. The effect indicates a launch attempt and does not require the program to finish starting.
 - A settings window is available from the extension's preferences button in Extension Manager.
 - No replacement taskbar, new autohide behavior or reserved-screen-area changes.
 - Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
@@ -132,9 +132,9 @@ journalctl --user -b | grep -i 'zorin-fisheye'
 - Monitor changes, logout/login, overview, fullscreen and autohide.
 - Hover then move the pointer outside the taskbar: the icon should revert **immediately**, not after 700 ms.
 - Add and remove running applications: icon clones must be created and destroyed without background polling.
-- Launch a **stopped** application from the taskbar: it should bounce, but clicking a running app must not bounce.
+- Launch a **stopped** application from the taskbar: the bounce should begin on mouse release, but clicking a running app must not bounce. Dragging or releasing outside the app icon must not bounce.
 - Open preferences from Extension Manager and change zoom, influence radius, bounce toggle and height.
-- Verify Chrome app icons retain their original backgrounds when enlarged.
+- Verify Chrome app icons retain their original backgrounds when enlarged. Compare 1× (magnification set to 0.00) with 1.5× or 2×: 1× should use Zorin's untouched original pixel rendering. Enlargements may still soften a small raster source; they must not double-scale the clone allocation.
 
 Please report findings including Zorin, GNOME, display scale and session type.
 

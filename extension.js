@@ -12,9 +12,10 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { magnificationFrame } from './magnification.js';
 import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
 import { isStoppedClick, isFreshLaunch, bounceOffset } from './launch-bounce.js';
+import { clonePlacement } from './icon-geometry.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
-const LAUNCH_WINDOW_US = 3_000_000;
+const CLICK_WINDOW_US = 2_000_000;
 
 /**
  * All interaction and panel geometry stay native to Zorin Taskbar.
@@ -27,13 +28,11 @@ export default class ZorinFisheyeExtension extends Extension
         this._entries = new Map();
         this._panels = new Map();
         this._signals = [];
-        this._launchCandidates = new Map();
+        this._pendingLaunch = null;
         this._refreshIdleId = 0;
         this._manager = null;
         this._managerSignalId = 0;
         this._settings = this.getSettings();
-        this._appSystem = Shell.AppSystem.get_default();
-
         this._connect(this._settings, 'changed', () =>
         {
             if (!this._settings.get_boolean('bounce-enabled'))
@@ -51,9 +50,6 @@ export default class ZorinFisheyeExtension extends Extension
             this._renderCurrentPointer();
         });
 
-        this._connect(this._appSystem, 'app-state-changed',
-            (_system, app) => this._onAppStateChanged(app));
-
         this._connect(Main.layoutManager, 'monitors-changed',
             () => this._scheduleRefresh());
 
@@ -65,6 +61,12 @@ export default class ZorinFisheyeExtension extends Extension
             if (event.type() === Clutter.EventType.BUTTON_PRESS)
             {
                 this._captureLaunch(event);
+            }
+            else if (event.type() === Clutter.EventType.BUTTON_RELEASE)
+            {
+                // Occurs before native click activation and potential
+                // replacement of a pinned launcher with a running icon.
+                this._completeLaunch(event);
             }
             else if (event.type() === Clutter.EventType.MOTION ||
                      event.type() === Clutter.EventType.ENTER ||
@@ -100,11 +102,10 @@ export default class ZorinFisheyeExtension extends Extension
         }
 
         this._entries.clear();
-        this._launchCandidates.clear();
+        this._pendingLaunch = null;
         this._entries = null;
         this._panels = null;
         this._settings = null;
-        this._appSystem = null;
     }
 
     _connect(object, signal, callback, into = this._signals)
@@ -431,13 +432,38 @@ export default class ZorinFisheyeExtension extends Extension
                 const pivotX = vertical ? (side === St.Side.RIGHT ? 1 : 0) : 0.5;
                 const pivotY = vertical ? 0.5 : (side === St.Side.TOP ? 0 : 1);
 
-                entry.overlay.set_pivot_point(pivotX, pivotY);
-                entry.overlay.set_position(x, y);
-                entry.overlay.set_size(width, height);
-                entry.overlay.set_scale(scale, scale);
-                showMagnifiedIcon(entry);
+                if (this._positionOverlay(entry, x, y, width, height, scale,
+                    pivotX, pivotY))
+                {
+                    showMagnifiedIcon(entry);
+                }
             });
         }
+    }
+
+    _positionOverlay(entry, x, y, width, height, scale, pivotX, pivotY)
+    {
+        // The source's *local* allocation is the clone's base size.
+        // Its stage-transformed size belongs only in the outer transform.
+        const [nativeWidth, nativeHeight] = entry.source.get_size();
+        const placement = clonePlacement(
+        {
+            x, y, width, height, nativeWidth, nativeHeight,
+            scale, pivotX, pivotY,
+            resourceScale: entry.source.get_resource_scale?.() ?? 1,
+        });
+
+        if (!placement)
+        {
+            hideMagnifiedIcon(entry);
+            return false;
+        }
+
+        entry.overlay.set_pivot_point(0, 0);
+        entry.overlay.set_position(placement.x, placement.y);
+        entry.overlay.set_size(placement.width, placement.height);
+        entry.overlay.set_scale(placement.scaleX, placement.scaleY);
+        return true;
     }
 
     _hidePanel(panel)
@@ -471,6 +497,8 @@ export default class ZorinFisheyeExtension extends Extension
 
     _captureLaunch(event)
     {
+        this._pendingLaunch = null;
+
         if (!this._settings.get_boolean('bounce-enabled') ||
             event.get_button() !== 1)
         {
@@ -486,52 +514,39 @@ export default class ZorinFisheyeExtension extends Extension
             if (app && entry.appIcon.contains(target) &&
                 isStoppedClick(1, app.get_state(), Shell.AppState.STOPPED))
             {
-                this._launchCandidates.set(app,
+                this._pendingLaunch =
                 {
-                    source: entry.source,
+                    entry,
+                    appIcon: entry.appIcon,
                     pressedAt: GLib.get_monotonic_time(),
-                });
+                };
                 break;
             }
         }
     }
 
-    _onAppStateChanged(app)
+    _completeLaunch(event)
     {
-        const candidate = this._launchCandidates.get(app);
+        const candidate = this._pendingLaunch;
+        this._pendingLaunch = null;
 
-        if (!candidate)
-        {
-            return;
-        }
-
-        const state = app.get_state();
-
-        if (state !== Shell.AppState.STARTING &&
-            state !== Shell.AppState.RUNNING)
-        {
-            if (state === Shell.AppState.STOPPED)
-            {
-                this._launchCandidates.delete(app);
-            }
-
-            return;
-        }
-
-        this._launchCandidates.delete(app);
-
-        if (!this._settings.get_boolean('bounce-enabled') ||
+        if (!candidate || event.get_button() !== 1 ||
+            !this._settings.get_boolean('bounce-enabled') ||
+            candidate.appIcon.isDragged ||
+            !candidate.appIcon.contains(event.get_source()) ||
             !isFreshLaunch(candidate.pressedAt,
-                GLib.get_monotonic_time(), LAUNCH_WINDOW_US))
+                GLib.get_monotonic_time(), CLICK_WINDOW_US))
         {
             return;
         }
 
-        const entry = this._entries.get(candidate.source);
-
-        if (entry)
+        // An attempt to activate a STOPPED app is a launch operation.
+        // Animating on release rather than on app-state-changed is important:
+        // Zorin can replace/destroy the launcher actor before the app emits
+        // STARTING/RUNNING. Ordinary clicks on RUNNING apps never get here.
+        if (this._entries.get(candidate.entry.source) === candidate.entry)
         {
-            this._bounce(entry);
+            this._bounce(candidate.entry);
         }
     }
 
@@ -567,10 +582,12 @@ export default class ZorinFisheyeExtension extends Extension
         entry.bouncing = true;
         entry.overlay.remove_all_transitions();
         entry.overlay.set_translation(0, 0, 0);
-        entry.overlay.set_pivot_point(0.5, 0.5);
-        entry.overlay.set_position(x, y);
-        entry.overlay.set_size(width, height);
-        entry.overlay.set_scale(1, 1);
+        if (!this._positionOverlay(entry, x, y, width, height, 1, 0.5, 0.5))
+        {
+            entry.bouncing = false;
+            return;
+        }
+
         showMagnifiedIcon(entry);
 
         const amplitude = this._settings.get_int('bounce-height');

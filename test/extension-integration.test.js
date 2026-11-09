@@ -44,6 +44,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         get_stage() { return {}; }
         get_transformed_position() { return [this.x, this.y]; }
         get_transformed_size() { return [this.w, this.h]; }
+        get_size() { return [this.w, this.h]; }
         get_opacity() { return this.opacity; }
         set_opacity(value) { this.opacity = value; }
     }
@@ -116,7 +117,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     };
     const Clutter = {
         Clone,
-        EventType: { MOTION: 1, ENTER: 2, LEAVE: 3, BUTTON_PRESS: 4 },
+        EventType: { MOTION: 1, ENTER: 2, LEAVE: 3, BUTTON_PRESS: 4, BUTTON_RELEASE: 5 },
         EVENT_PROPAGATE: false,
         AnimationMode: { EASE_OUT_QUAD: 1, EASE_IN_QUAD: 2 },
     };
@@ -138,7 +139,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
 
     const settings = new Emitter();
     settings.get_int = (key) => key === 'influence-radius' ? 120 : 14;
-    settings.get_double = () => 0.5;
+    let zoom = 0.5;
+    settings.get_double = () => zoom;
     settings.get_boolean = () => true;
     class Extension
     {
@@ -157,12 +159,15 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const launchBounce = readFileSync(
         new URL('../launch-bounce.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const iconGeometry = readFileSync(
+        new URL('../icon-geometry.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
 
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
-        launchBounce + '\nreturn {' +
+        launchBounce + '\n' + iconGeometry + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
-        'isStoppedClick, isFreshLaunch, bounceOffset};')();
+        'isStoppedClick, isFreshLaunch, bounceOffset, clonePlacement};')();
 
     const ExtensionType = new Function(
         'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
@@ -179,6 +184,16 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     pointer = [100, 1010];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 0);
+    const hoverClone = extension._entries.get(source).overlay;
+    assert.equal(hoverClone.w, source.w,
+        'clone allocation must remain equal to native source');
+    assert.equal(hoverClone.h, source.h);
+
+    zoom = 0;
+    stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
+    assert.equal(source.opacity, 255, '1x must paint native Zorin icon');
+    assert.equal(hoverClone.visible, false, '1x must not draw clone');
+    zoom = 0.5;
 
     pointer = [100, 800];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
@@ -207,16 +222,32 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         get_button: () => 1,
         get_source: () => icon,
     };
-    stage.emit('captured-event', press);
-    app.state = Shell.AppState.STARTING;
-    appSystem.emit('app-state-changed', app);
+    const release = {
+        type: () => Clutter.EventType.BUTTON_RELEASE,
+        get_button: () => 1,
+        get_source: () => icon,
+    };
     const clone = extension._entries.get(source).overlay;
-    assert.equal(clone.bounceSteps, 4, 'stopped app starts with bounce');
+    stage.emit('captured-event', press);
+    assert.equal(clone.bounceSteps, 0, 'press alone must not bounce');
+    stage.emit('captured-event', release);
+    assert.equal(clone.bounceSteps, 4,
+        'a completed left-click on stopped app starts bounce');
 
     app.state = Shell.AppState.RUNNING;
     stage.emit('captured-event', press);
-    appSystem.emit('app-state-changed', app);
+    stage.emit('captured-event', release);
     assert.equal(clone.bounceSteps, 4, 'running app must not bounce');
+
+    app.state = Shell.AppState.STOPPED;
+    stage.emit('captured-event', press);
+    stage.emit('captured-event', {
+        type: () => Clutter.EventType.BUTTON_RELEASE,
+        get_button: () => 1,
+        get_source: () => secondIcon,
+    });
+    assert.equal(clone.bounceSteps, 4,
+        'releasing over another actor must not bounce');
 
     icons = [icon];
     box.emit('child-removed', secondIcon);
