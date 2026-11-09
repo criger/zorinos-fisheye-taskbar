@@ -16,6 +16,17 @@ export function isFreshLaunch(pressedAt, now, maxAge)
         now - pressedAt <= maxAge;
 }
 
+// Clutter captured events sometimes have no source actor. Test stage-space
+// coordinates against the program icon instead of contains(null).
+export function pointInsideActor(x, y, actorX, actorY, width, height)
+{
+    return [x, y, actorX, actorY, width, height]
+        .every(Number.isFinite) &&
+        width > 0 && height > 0 &&
+        x >= actorX && x <= actorX + width &&
+        y >= actorY && y <= actorY + height;
+}
+
 // Move away from the panel edge, without changing Zorin's panel geometry.
 export function bounceOffset(side, distance, top, left, right)
 {

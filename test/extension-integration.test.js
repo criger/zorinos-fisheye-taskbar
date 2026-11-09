@@ -64,6 +64,7 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         set_size(w, h) { this.w = w; this.h = h; }
         set_pivot_point() {}
         set_scale() {}
+        set_icon_size(size) { this.w = size; this.h = size; }
         set_translation() {}
         remove_all_transitions() {}
         ease(params)
@@ -80,13 +81,21 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const appSystem = new Emitter();
     const box = new Emitter();
     const panelActor = new Actor(0, 980, 800, 65);
-    const app = { state: 0, get_state() { return this.state; } };
-    const source = new Actor(90, 995);
-    const icon = {
-        app,
-        icon: { _iconBin: source },
-        contains(actor) { return actor === this; },
+    const app = {
+        state: 0,
+        get_state() { return this.state; },
+        create_icon_texture(size)
+        {
+            const actor = new Clone({ source: null });
+            actor.set_size(size, size);
+            actor.hd = true;
+            return actor;
+        },
     };
+    const source = new Actor(90, 995);
+    const icon = new Actor(87, 992, 40, 40);
+    icon.app = app;
+    icon.icon = { _iconBin: source };
     let icons = [icon];
 
     const panel = {
@@ -141,7 +150,9 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     settings.get_int = (key) => key === 'influence-radius' ? 120 : 14;
     let zoom = 0.5;
     settings.get_double = () => zoom;
-    settings.get_boolean = () => true;
+    let useHD = true;
+    settings.get_boolean = (key) =>
+        key === 'high-resolution-icons' ? useHD : true;
     class Extension
     {
         getSettings() { return settings; }
@@ -162,12 +173,16 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const iconGeometry = readFileSync(
         new URL('../icon-geometry.js', import.meta.url), 'utf8')
         .replace(/^export /gm, '');
+    const iconRendering = readFileSync(
+        new URL('../icon-rendering.js', import.meta.url), 'utf8')
+        .replace(/^export /gm, '');
 
     const functions = new Function(
         magnification + '\n' + iconVisibility + '\n' +
-        launchBounce + '\n' + iconGeometry + '\nreturn {' +
+        launchBounce + '\n' + iconGeometry + '\n' + iconRendering + '\nreturn {' +
         'magnificationFrame, hideMagnifiedIcon, showMagnifiedIcon, ' +
-        'isStoppedClick, isFreshLaunch, bounceOffset, clonePlacement};')();
+        'isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor, ' +
+        'clonePlacement, highResolutionSize, highResolutionPlacement};')();
 
     const ExtensionType = new Function(
         'Clutter', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',
@@ -185,15 +200,28 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 0);
     const hoverClone = extension._entries.get(source).overlay;
-    assert.equal(hoverClone.w, source.w,
-        'clone allocation must remain equal to native source');
-    assert.equal(hoverClone.h, source.h);
+    assert.equal(extension._entries.get(source).highResolution, true);
+    assert.equal(hoverClone.hd, true);
+    assert.ok(hoverClone.w >= source.w * 2,
+        'HD mode must request at least a 2x texture');
 
     zoom = 0;
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
     assert.equal(source.opacity, 255, '1x must paint native Zorin icon');
     assert.equal(hoverClone.visible, false, '1x must not draw clone');
     zoom = 0.5;
+
+    // Switching in preferences is possible without leaving GNOME Shell.
+    useHD = false;
+    settings.emit('changed');
+    assert.equal(extension._entries.get(source).highResolution, false);
+    assert.equal(extension._entries.get(source).overlay.source, source);
+    assert.equal(hoverClone.destroyed, true);
+
+    useHD = true;
+    settings.emit('changed');
+    assert.equal(extension._entries.get(source).highResolution, true);
+    assert.equal(extension._entries.get(source).overlay.hd, true);
 
     pointer = [100, 800];
     stage.emit('captured-event', { type: () => Clutter.EventType.MOTION });
@@ -206,11 +234,9 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
 
     const second = new Actor(140, 995);
     const secondApp = { state: 0, get_state() { return this.state; } };
-    const secondIcon = {
-        app: secondApp,
-        icon: { _iconBin: second },
-        contains(target) { return target === this; },
-    };
+    const secondIcon = new Actor(136, 992, 40, 40);
+    secondIcon.app = secondApp;
+    secondIcon.icon = { _iconBin: second };
     icons.push(secondIcon);
     box.emit('child-added', secondIcon);
     assert.equal(idle.length, 1);
@@ -220,12 +246,14 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     const press = {
         type: () => Clutter.EventType.BUTTON_PRESS,
         get_button: () => 1,
-        get_source: () => icon,
+        get_source: () => null,
+        get_coords: () => [100, 1010],
     };
     const release = {
         type: () => Clutter.EventType.BUTTON_RELEASE,
         get_button: () => 1,
-        get_source: () => icon,
+        get_source: () => null,
+        get_coords: () => [100, 1010],
     };
     const clone = extension._entries.get(source).overlay;
     stage.emit('captured-event', press);
@@ -244,7 +272,8 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
     stage.emit('captured-event', {
         type: () => Clutter.EventType.BUTTON_RELEASE,
         get_button: () => 1,
-        get_source: () => secondIcon,
+        get_source: () => null,
+        get_coords: () => [150, 1010],
     });
     assert.equal(clone.bounceSteps, 4,
         'releasing over another actor must not bounce');

@@ -45,6 +45,15 @@ export default class ZorinFisheyePreferences extends ExtensionPreferences
         settings.bind('magnification', zoomRow, 'value',
             Gio.SettingsBindFlags.DEFAULT);
 
+        const highResolutionRow = new Adw.SwitchRow(
+        {
+            title: 'High-resolution icons',
+            subtitle: 'Sharper magnification. Some apps use a different image or background at larger icon sizes.',
+        });
+        magnification.add(highResolutionRow);
+        settings.bind('high-resolution-icons', highResolutionRow, 'active',
+            Gio.SettingsBindFlags.DEFAULT);
+
         const radiusRow = new Adw.SpinRow(
         {
             title: 'Influence radius',

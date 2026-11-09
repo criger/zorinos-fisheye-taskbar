@@ -6,6 +6,11 @@
       <summary>Maximum additional icon scale</summary>
       <description>0.75 means the icon can reach 175% of normal size.</description>
     </key>
+    <key name="high-resolution-icons" type="b">
+      <default>true</default>
+      <summary>Prefer high-resolution application icon textures</summary>
+      <description>Sharper enlarged icons, but some applications use different artwork in different icon sizes. When disabled, render a clone of the exact original Zorin Taskbar icon.</description>
+    </key>
     <key name="influence-radius" type="i">
       <default>120</default>
       <summary>Influence radius in logical pixels</summary>

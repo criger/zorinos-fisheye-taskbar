@@ -11,7 +11,8 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import { magnificationFrame } from './magnification.js';
 import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
-import { isStoppedClick, isFreshLaunch, bounceOffset } from './launch-bounce.js';
+import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from './launch-bounce.js';
+import { highResolutionSize, highResolutionPlacement } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
 
 const MIN_VISIBLE_MAGNIFICATION = 1.01;
@@ -26,6 +27,7 @@ export default class ZorinFisheyeExtension extends Extension
     enable()
     {
         this._entries = new Map();
+        this._orphanBounces = new Set();
         this._panels = new Map();
         this._signals = [];
         this._pendingLaunch = null;
@@ -45,8 +47,19 @@ export default class ZorinFisheyeExtension extends Extension
                         hideMagnifiedIcon(entry);
                     }
                 }
+
+                for (const entry of this._orphanBounces)
+                {
+                    this._cancelBounce(entry);
+                    entry.overlay.destroy();
+                }
+
+                this._orphanBounces.clear();
             }
 
+            // Rebuild only when render mode changes; HD textures were
+            // loaded when the icon was discovered, not during hover.
+            this._refreshIcons();
             this._renderCurrentPointer();
         });
 
@@ -101,6 +114,13 @@ export default class ZorinFisheyeExtension extends Extension
             entry.overlay.destroy();
         }
 
+        for (const entry of this._orphanBounces)
+        {
+            this._cancelBounce(entry);
+            entry.overlay.destroy();
+        }
+
+        this._orphanBounces.clear();
         this._entries.clear();
         this._pendingLaunch = null;
         this._entries = null;
@@ -251,6 +271,62 @@ export default class ZorinFisheyeExtension extends Extension
         }
     }
 
+    _makeOverlay(appIcon, source, panel)
+    {
+        const preferHighResolution = this._settings.get_boolean(
+            'high-resolution-icons');
+        let overlay = null;
+        let highResolution = false;
+        let textureSize = 0;
+
+        if (preferHighResolution && source.get_stage())
+        {
+            const [width, height] = source.get_transformed_size();
+            textureSize = highResolutionSize(
+                Math.max(width, height, panel.taskbar.iconSize || 1),
+                1 + this._settings.get_double('magnification'));
+
+            try
+            {
+                // Restore the proven sharp method from commit 173f9ed.
+                // It can choose a different size-dependent app icon asset.
+                overlay = appIcon.app?.create_icon_texture?.(textureSize) ?? null;
+                highResolution = Boolean(overlay);
+            }
+            catch (error)
+            {
+                console.warn('[Zorin Fisheye] HD icon unavailable:', error);
+            }
+        }
+
+        if (!overlay)
+        {
+            overlay = new Clutter.Clone(
+            {
+                source,
+                reactive: false,
+                visible: false,
+            });
+        }
+
+        overlay.reactive = false;
+
+        if (highResolution)
+        {
+            overlay.set_size(textureSize, textureSize);
+        }
+
+        overlay.hide();
+        Main.uiGroup.add_child(overlay);
+
+        return {
+            overlay,
+            highResolution,
+            textureSize,
+            renderPreference: preferHighResolution,
+        };
+    }
+
     _refreshIcons()
     {
         if (!this._entries)
@@ -283,22 +359,40 @@ export default class ZorinFisheyeExtension extends Extension
                 {
                     existing.panel = panel;
                     existing.appIcon = appIcon;
+                    const preferHD = this._settings.get_boolean(
+                        'high-resolution-icons');
+
+                    if (!existing.bouncing &&
+                        existing.renderPreference !== preferHD)
+                    {
+                        hideMagnifiedIcon(existing);
+                        existing.overlay.destroy();
+                        Object.assign(existing,
+                            this._makeOverlay(appIcon, source, panel));
+                    }
+                    else if (existing.highResolution && !existing.bouncing)
+                    {
+                        // Changing the maximum zoom may require a larger
+                        // texture; do not reload icons on every mouse event.
+                        const [w, h] = source.get_transformed_size();
+                        const size = highResolutionSize(
+                            Math.max(w, h, panel.taskbar.iconSize || 1),
+                            1 + this._settings.get_double('magnification'));
+                        if (size > existing.textureSize)
+                        {
+                            existing.overlay.set_icon_size(size);
+                            existing.overlay.set_size(size, size);
+                            existing.textureSize = size;
+                        }
+                    }
+
                     continue;
                 }
 
-                // Source stays the original Zorin actor, so PNG differences
-                // between the app's small/large variants cannot change color.
-                const overlay = new Clutter.Clone(
-                {
-                    source,
-                    reactive: false,
-                    visible: false,
-                });
-
-                Main.uiGroup.add_child(overlay);
                 this._entries.set(source,
                 {
-                    panel, appIcon, source, overlay,
+                    panel, appIcon, source,
+                    ...this._makeOverlay(appIcon, source, panel),
                     originalOpacity: null,
                     bouncing: false,
                 });
@@ -309,9 +403,34 @@ export default class ZorinFisheyeExtension extends Extension
         {
             if (!discovered.has(source))
             {
-                this._cancelBounce(entry);
-                hideMagnifiedIcon(entry);
-                entry.overlay.destroy();
+                if (entry.bouncing && entry.highResolution)
+                {
+                    // A launcher may disappear when GNOME starts the app.
+                    // The independent St.Icon can finish bouncing, even
+                    // after Zorin replaces its original actor.
+                    if (entry.originalOpacity !== null)
+                    {
+                        try
+                        {
+                            source.set_opacity(entry.originalOpacity);
+                        }
+                        catch (error)
+                        {
+                            // Source actor may already be destroyed.
+                        }
+
+                        entry.originalOpacity = null;
+                    }
+
+                    this._orphanBounces.add(entry);
+                }
+                else
+                {
+                    this._cancelBounce(entry);
+                    hideMagnifiedIcon(entry);
+                    entry.overlay.destroy();
+                }
+
                 this._entries.delete(source);
             }
         }
@@ -443,8 +562,21 @@ export default class ZorinFisheyeExtension extends Extension
 
     _positionOverlay(entry, x, y, width, height, scale, pivotX, pivotY)
     {
-        // The source's *local* allocation is the clone's base size.
-        // Its stage-transformed size belongs only in the outer transform.
+        if (entry.highResolution)
+        {
+            const placement = highResolutionPlacement(
+            {
+                x, y, width, height, scale, pivotX, pivotY,
+                textureSize: entry.textureSize,
+            });
+            entry.overlay.set_pivot_point(0, 0);
+            entry.overlay.set_position(placement.x, placement.y);
+            entry.overlay.set_scale(placement.scaleX, placement.scaleY);
+            return true;
+        }
+
+        // Exact-original fallback: the source's native dimensions avoid
+        // a second transform when using a Clutter.Clone.
         const [nativeWidth, nativeHeight] = entry.source.get_size();
         const placement = clonePlacement(
         {
@@ -495,6 +627,32 @@ export default class ZorinFisheyeExtension extends Extension
         this._hide(this._entries.values(), force);
     }
 
+    _eventPosition(event)
+    {
+        const coords = event.get_coords?.();
+
+        if (Array.isArray(coords) && coords.length >= 2 &&
+            Number.isFinite(coords[0]) && Number.isFinite(coords[1]))
+        {
+            return coords;
+        }
+
+        return global.get_pointer();
+    }
+
+    _pointHitsActor(actor, x, y)
+    {
+        if (!actor?.get_stage?.())
+        {
+            return false;
+        }
+
+        const [actorX, actorY] = actor.get_transformed_position();
+        const [width, height] = actor.get_transformed_size();
+
+        return pointInsideActor(x, y, actorX, actorY, width, height);
+    }
+
     _captureLaunch(event)
     {
         this._pendingLaunch = null;
@@ -505,13 +663,15 @@ export default class ZorinFisheyeExtension extends Extension
             return;
         }
 
-        const target = event.get_source();
+        // Some stage events have a null source actor; contains(null)
+        // throws in Clutter. Use event coordinates instead.
+        const [x, y] = this._eventPosition(event);
 
         for (const entry of this._entries.values())
         {
             const app = entry.appIcon?.app;
 
-            if (app && entry.appIcon.contains(target) &&
+            if (app && this._pointHitsActor(entry.appIcon, x, y) &&
                 isStoppedClick(1, app.get_state(), Shell.AppState.STOPPED))
             {
                 this._pendingLaunch =
@@ -533,17 +693,19 @@ export default class ZorinFisheyeExtension extends Extension
         if (!candidate || event.get_button() !== 1 ||
             !this._settings.get_boolean('bounce-enabled') ||
             candidate.appIcon.isDragged ||
-            !candidate.appIcon.contains(event.get_source()) ||
             !isFreshLaunch(candidate.pressedAt,
                 GLib.get_monotonic_time(), CLICK_WINDOW_US))
         {
             return;
         }
 
-        // An attempt to activate a STOPPED app is a launch operation.
-        // Animating on release rather than on app-state-changed is important:
-        // Zorin can replace/destroy the launcher actor before the app emits
-        // STARTING/RUNNING. Ordinary clicks on RUNNING apps never get here.
+        const [x, y] = this._eventPosition(event);
+
+        if (!this._pointHitsActor(candidate.appIcon, x, y))
+        {
+            return;
+        }
+
         if (this._entries.get(candidate.entry.source) === candidate.entry)
         {
             this._bounce(candidate.entry);
@@ -602,8 +764,10 @@ export default class ZorinFisheyeExtension extends Extension
 
         const runStep = (index) =>
         {
-            if (!this._entries || this._entries.get(entry.source) !== entry ||
-                !entry.bouncing)
+            const tracked = this._entries?.get(entry.source) === entry;
+            const orphan = this._orphanBounces?.has(entry);
+
+            if ((!tracked && !orphan) || !entry.bouncing)
             {
                 return;
             }
@@ -611,8 +775,18 @@ export default class ZorinFisheyeExtension extends Extension
             if (index === steps.length)
             {
                 this._cancelBounce(entry);
-                hideMagnifiedIcon(entry);
-                this._renderCurrentPointer();
+
+                if (orphan)
+                {
+                    entry.overlay.destroy();
+                    this._orphanBounces.delete(entry);
+                }
+                else
+                {
+                    hideMagnifiedIcon(entry);
+                    this._renderCurrentPointer();
+                }
+
                 return;
             }
 
