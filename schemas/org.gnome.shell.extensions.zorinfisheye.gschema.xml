@@ -11,5 +11,15 @@
       <summary>Influence radius in logical pixels</summary>
       <description>How far away the cursor influences adjacent icons.</description>
     </key>
+    <key name="bounce-enabled" type="b">
+      <default>true</default>
+      <summary>Bounce when a stopped application is launched from the taskbar</summary>
+      <description>Do not bounce when switching to running applications.</description>
+    </key>
+    <key name="bounce-height" type="i">
+      <default>14</default>
+      <summary>Distance of the launch bounce in logical pixels</summary>
+      <description>The animated icon moves away from the taskbar edge.</description>
+    </key>
   </schema>
 </schemalist>

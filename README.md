@@ -20,11 +20,15 @@ These are firsthand desktop observations, not a complete compatibility or regres
 
 - Zorin Taskbar retains responsibility for clicks, drag-and-drop, previews, app management and window switching.
 - Icons nearest the pointer grow; nearby icons grow less, using a cosine falloff.
-- An input-transparent Clutter clone draws above the taskbar to avoid clipping the magnified icons.
+- A non-reactive Clutter clone of the **exact existing Zorin icon** draws above the taskbar, avoiding clipping and preventing icon variants from unexpectedly changing colors or transparency.
+- Clones are prepared when icons are added to the taskbar, not loaded on every mouse movement.
+- Child-added/removed and panel-created signals replace the former 700 ms polling. Leaving the taskbar restores the original icon immediately.
+- On a primary click that launches a **stopped** application, the icon bounces briefly; focusing an already running application does not trigger a bounce.
+- A settings window is available from the extension's preferences button in Extension Manager.
 - No replacement taskbar, new autohide behavior or reserved-screen-area changes.
 - Initial target: GNOME Shell 46 with Zorin Taskbar, including Zorin's bottom-positioned layout presets.
 
-**Known limitations:** Magnification did not work with the left-side vertical taskbar layout in the initial Zorin test. The prototype draws a magnified visual overlay but does not reposition neighboring native icons; they may overlap while enlarged. Zorin Taskbar's internal actor structure is not a stable public API. Different scaling, multi-monitor setups, X11/Wayland, drag-and-drop and autohide still need systematic regression testing.
+**Known limitations:** Magnification did not work with the left-side vertical taskbar layout in the initial Zorin test. The new event-driven behavior, launch bounce and preferences UI are experimental and require an actual Zorin/GNOME Shell 46 regression test. The prototype draws a magnified visual overlay but does not reposition neighboring native icons; they may overlap while enlarged. Zorin Taskbar's internal actor structure is not a stable public API. Different scaling, multi-monitor setups, X11/Wayland, drag-and-drop and autohide still need systematic regression testing.
 
 ## Local installation (Zorin OS 18)
 
@@ -54,11 +58,31 @@ You can test this without publishing to the GNOME Extensions store.
    gnome-extensions disable zorin-fisheye@criger.github.io
    ```
 
+**Testing the current feature branch from an existing clone:**
+
+```bash
+cd ~/zorinos-fisheye-taskbar
+git fetch origin
+git switch fix/duplicate-hover-icon
+git pull --ff-only origin fix/duplicate-hover-icon
+gnome-extensions disable zorin-fisheye@criger.github.io
+bash scripts/install-local.sh
+```
+
+Log out and back in to reload GNOME Shell's extension code, then enable it using the command above.
+
 **Wayland:** Do not restart GNOME Shell with `Alt+F2 → r`. Log out and in instead.
 
 ## Configuration
 
-The initial prototype provides GSettings keys, not yet a graphical preferences dialog:
+Open **Extension Manager → Installed → Zorin Taskbar Fisheye → Settings** (the gear icon) to adjust:
+
+- Maximum icon magnification (1× to 2×).
+- Influence radius (20–300 logical pixels).
+- Whether stopped applications bounce on launch.
+- Bounce height (4–40 logical pixels).
+
+Changes are stored in GSettings and applied without restarting the extension. The existing keys can still be changed from the terminal:
 
 ```bash
 SCHEMA="$HOME/.local/share/gnome-shell/extensions/zorin-fisheye@criger.github.io/schemas"
@@ -106,6 +130,11 @@ journalctl --user -b | grep -i 'zorin-fisheye'
 - Drag-and-drop from one window to another via native taskbar.
 - Disable/re-enable without residual behavior or visuals.
 - Monitor changes, logout/login, overview, fullscreen and autohide.
+- Hover then move the pointer outside the taskbar: the icon should revert **immediately**, not after 700 ms.
+- Add and remove running applications: icon clones must be created and destroyed without background polling.
+- Launch a **stopped** application from the taskbar: it should bounce, but clicking a running app must not bounce.
+- Open preferences from Extension Manager and change zoom, influence radius, bounce toggle and height.
+- Verify Chrome app icons retain their original backgrounds when enlarged.
 
 Please report findings including Zorin, GNOME, display scale and session type.
 
