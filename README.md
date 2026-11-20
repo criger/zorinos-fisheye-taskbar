@@ -1,5 +1,7 @@
 # Zorin Taskbar Fisheye
 
+☕🍺 **Like this project?** If you enjoy this solution, consider [buying me a coffee or a beer](https://buymeacoffee.com/criger). I get thirsty from time to time, and your support helps fund my *very serious research* into which beverage tastes best when I'm thirsty! 😄
+
 **Bring macOS-style Dock magnification to the taskbar you already love in Zorin OS.**
 
 Zorin Taskbar Fisheye adds a smooth, animated *fisheye* effect to application icons on **Zorin OS's existing, full-width taskbar**.  
