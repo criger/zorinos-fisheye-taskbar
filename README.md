@@ -1,10 +1,14 @@
 # Zorin Taskbar Fisheye
 
-☕🍺 **Like this project?** If you enjoy this solution, consider [buying me a coffee or a beer](https://buymeacoffee.com/criger). I get thirsty from time to time, and your support helps fund my *very serious research* into which beverage tastes best when I'm thirsty! 😄
+☕🍺 **Like this project?**  
+If you enjoy this solution, consider [buying me a coffee or a beer](https://buymeacoffee.com/criger).  
+I get thirsty from time to time, and your support helps fund my ***very serious research*** into which beverage tastes best when I'm thirsty 😄
 
 <a href="https://buymeacoffee.com/criger">
-  <img src="https://media.giphy.com/media/wQalJEIkSWUaVTXHHB/giphy.gif" alt="Animated Support Me on Buy Me a Coffee sticker by Buy Me a Coffee" width="240">
+  <img src="https://media.giphy.com/media/iWi0FxTM4szvNXGQAD/giphy.gif" alt="Animated Support Me on Buy Me a Coffee sticker by Buy Me a Coffee" width="240">
 </a>
+
+---
 
 **Bring macOS-style Dock magnification to the taskbar you already love in Zorin OS.**
 
