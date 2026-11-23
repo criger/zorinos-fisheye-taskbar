@@ -133,21 +133,37 @@ Some themed or embedded icons do not have a regular file path; an empty path is 
 
 ## Update an existing installation
 
-If you installed the temporary Zorin Dash v110 test patch, first run `python3 patch_fisheye_dash.py restore` from the extracted test package **before** installing the repository version. This removes the temporary backup and leaves upgrades managed by the regular installer.
+To replace an older version, update the repository and reinstall the extension. Your Fisheye preferences are stored in GSettings and are preserved.
 
-If you already cloned this repository, use the latest `main` branch:
+**If you already cloned the repository**, run:
 
 ```bash
 cd ~/zorinos-fisheye-taskbar
 git switch main
 git pull --ff-only origin main
-
 gnome-extensions disable zorin-fisheye@criger.github.io
 bash scripts/install-local.sh
 ```
 
-Log out and back in. If the updated extension still behaves strangely, **restart the computer** before reporting a problem.  
-Enable it again in Extension Manager if necessary.
+**If you originally installed from a ZIP or do not have a local clone**, start with a fresh copy:
+
+```bash
+cd ~
+git clone https://github.com/criger/zorinos-fisheye-taskbar.git
+cd zorinos-fisheye-taskbar
+gnome-extensions disable zorin-fisheye@criger.github.io
+bash scripts/install-local.sh
+```
+
+If `~/zorinos-fisheye-taskbar` already exists, use the first method instead.
+
+**Log out and back in** to load the updated JavaScript, then enable **Zorin Taskbar Fisheye** in Extension Manager, or run:
+
+```bash
+gnome-extensions enable zorin-fisheye@criger.github.io
+```
+
+A full restart can help if GNOME Shell still uses the previous code. You do not need to remove the old extension, reset its settings, or modify Zorin's built-in Taskbar/Dash.
 
 To temporarily switch off the effect without changing Zorin Taskbar or Zorin Dash:
 
