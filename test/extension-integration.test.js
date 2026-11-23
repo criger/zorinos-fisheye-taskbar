@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { findZorinDashPanels, getActiveDash } from '../dash-integration.js';
 
 test('icon lifecycle, instant exit and launch-only bounce without polling', () =>
 {
@@ -321,6 +322,9 @@ test('icon lifecycle, instant exit and launch-only bounce without polling', () =
         'shouldUseHighResolution, pixelPerfectScale, ' +
         'findOriginalIconContent, renderingMode, aaBufferFactor, tooltipPosition, ' +
         'normalizeTaskbarApps, iconOverrideFor, appRowsToVariant};')();
+
+    functions.findZorinDashPanels = findZorinDashPanels;
+    functions.getActiveDash = getActiveDash;
 
     const ExtensionType = new Function(
         'Clutter', 'Gio', 'GLib', 'Shell', 'St', 'Main', 'Extension', 'global',

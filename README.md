@@ -10,27 +10,27 @@ I get thirsty from time to time, and your support helps fund my ***very serious 
 
 ---
 
-**Bring macOS-style Dock magnification to the taskbar you already love in Zorin OS.**
+**Bring macOS-style Dock magnification to the built-in taskbar and dock you already love in Zorin OS.**
 
-Zorin Taskbar Fisheye adds a smooth, animated *fisheye* effect to application icons on **Zorin OS's existing, full-width taskbar**.  
+Zorin Taskbar Fisheye adds a smooth, animated *fisheye* effect to application icons on **Zorin OS's existing Taskbar and Zorin Dash**.  
 Hover over an icon and it grows; nearby icons respond according to their distance from the pointer.  
 Move away and the taskbar returns to normal.
 
-**No replacement dock. No new panel. No change to your familiar Windows-style desktop layout.**
+**No replacement dock or additional panel. Keep your preferred Zorin desktop layout.**
 
 ![Before and after: Zorin OS taskbar icons in their normal size and with macOS-style fisheye magnification on hover](assets/screenshots/zorin-fisheye-demo.webp)
 
-*The same Zorin Taskbar before and during hover. Your launcher, pinned applications and system area stay where they belong.*
+*The same Zorin Taskbar before and during hover. Your launcher, pinned applications and system area stay where they belong. The effect also works with Zorin Dash in the left-side layout.*
 
 **Status:**  
-Experimental, working on the author's Zorin OS 18 / GNOME Shell 46 desktop with a bottom-positioned taskbar. **License:** [GPL-3.0](LICENSE). **Not an official Zorin OS or GNOME extension.**
+Experimental, tested by the author on Zorin OS 18 / GNOME Shell 46 with a bottom-positioned Zorin Taskbar and a left-side Zorin Dash v110. **License:** [GPL-3.0](LICENSE). **Not an official Zorin OS or GNOME extension.**
 
 ## Why another fisheye extension?
 
-Zorin OS already has a capable taskbar. It handles your running and pinned apps, window previews, application switching and the familiar full-width layout.  
+Zorin OS already provides both Zorin Taskbar and Zorin Dash, depending on your desktop layout. They handle running and pinned apps, window previews and application switching.  
 If you only want the visual effect of the macOS Dock, **replacing that taskbar with a separate dock is a big compromise**.
 
-This extension takes a smaller approach: **keep Zorin Taskbar in charge, and add magnification as a visual layer.**  
+This extension takes a smaller approach: **keep Zorin Taskbar or Zorin Dash in charge, and add magnification as a visual layer.**  
 It is designed not to take over clicks, drag-and-drop, window previews, autohide or the screen space reserved for your taskbar.
 
 ### Highlights
@@ -46,8 +46,8 @@ Optionally animate an icon when starting an application, without bouncing when m
 **Per-application icon choice:**  
 Browse for an SVG, PNG or other supported image in an easy-to-use settings tab.  
 
-**Native taskbar layout:**  
-No second dock, extra autohide mechanism or increased reserved taskbar height.  
+**Native taskbar/dock layout:**  
+Uses the Zorin component already present in your chosen layout, without adding a second dock, autohide mechanism or additional reserved screen space.  
 
 **Local and lightweight:**  
 A GNOME Shell extension written in JavaScript/GJS, with settings stored locally in GSettings.  
@@ -55,7 +55,7 @@ No account or online service is required.
 
 ## Install on Zorin OS
 
-The initial target is **Zorin OS 18 with GNOME Shell 46** and Zorin Taskbar enabled.  
+The initial target is **Zorin OS 18 with GNOME Shell 46**, using the built-in Zorin Taskbar or Zorin Dash (tested with Dash v110).  
 Other GNOME versions and other Linux distributions have not been verified.  
 Installation is local to your user account; it does **not** need `sudo`.
 
@@ -122,7 +122,7 @@ If the high-resolution version looks different (for example, a Chrome-installed 
 
 ## Give individual applications the right icon
 
-The **Icons** tab lists the applications currently pinned to or running on your Zorin Taskbar.  
+The **Icons** tab lists the applications currently pinned to or running on your active Zorin Taskbar or Zorin Dash.  
 See their resolved image paths when available, choose a replacement with **…**, or reset an override.  
 Changes affect both the normal and magnified taskbar icon; the application's `.desktop` file is not rewritten.
 
@@ -132,6 +132,8 @@ For best results, choose **SVG** or a square **PNG at least 128 × 128 pixels** 
 Some themed or embedded icons do not have a regular file path; an empty path is normal, and you can still choose a replacement.
 
 ## Update an existing installation
+
+If you installed the temporary Zorin Dash v110 test patch, first run `python3 patch_fisheye_dash.py restore` from the extracted test package **before** installing the repository version. This removes the temporary backup and leaves upgrades managed by the regular installer.
 
 If you already cloned this repository, use the latest `main` branch:
 
@@ -147,7 +149,7 @@ bash scripts/install-local.sh
 Log out and back in. If the updated extension still behaves strangely, **restart the computer** before reporting a problem.  
 Enable it again in Extension Manager if necessary.
 
-To temporarily switch off the effect without changing Zorin Taskbar itself:
+To temporarily switch off the effect without changing Zorin Taskbar or Zorin Dash:
 
 ```bash
 gnome-extensions disable zorin-fisheye@criger.github.io
@@ -156,23 +158,22 @@ gnome-extensions disable zorin-fisheye@criger.github.io
 ## Compatibility and known limitations
 
 **Tested:**  
-Zorin OS 18 / GNOME Shell 46 with various **bottom-positioned** Zorin taskbar layouts.  
-Other systems and GNOME versions are not currently verified.  
+Zorin OS 18 / GNOME Shell 46 with bottom-positioned Zorin Taskbar and left-positioned Zorin Dash v110, including switching between these layouts.  
+Right-side and other Zorin Dash configurations use the same adapter but have not all been runtime-tested. Other systems and GNOME versions are not currently verified.  
 
-**Known limitation:**  
-The **left-side vertical taskbar** layout did not magnify correctly in the author's tests.  
-The effect draws enlarged icons over the native taskbar.  
+**Visual limitation:**  
+The effect draws enlarged icons over the native taskbar or dock.  
 Neighbouring icons are not physically moved aside, so very large icons can overlap visually.  
 
 **Hover labels:**  
 If Zorin does not show an application label for a running program, this extension does not force one to appear.  
 The same behaviour can occur with the extension disabled; Zorin owns native tooltip visibility.
-The extension depends on Zorin Taskbar internals, which may change in future releases.  
-Other dock/taskbar extensions can conflict with it.
+The extension depends on internal Zorin Taskbar and Zorin Dash APIs, which may change in future releases.  
+Unrelated third-party dock/taskbar extensions can conflict with it.
 
 ### Something not working?
 
-First check that **Zorin Taskbar remains enabled** and that other replacement docks are not active.  
+First check that **Zorin Taskbar or Zorin Dash is enabled**, depending on the selected layout, and that unrelated replacement docks are not active.  
 Try logging out and back in, then a **full restart** if needed.
 
 For diagnostic messages, run:
@@ -188,12 +189,12 @@ Screenshots help too.
 
 ## How it works (for the curious)
 
-Zorin Taskbar continues to handle application and window behaviour.  
-The extension reads taskbar icon positions and draws **non-interactive Clutter overlays** above the taskbar, using a cosine-based magnification curve.  
-This avoids changing the panel's height or taking mouse and keyboard input away from the native taskbar.  
+Zorin Taskbar or Zorin Dash continues to handle application and window behaviour.  
+The extension reads the active component's icon positions through a small adapter and draws **non-interactive Clutter overlays** above it, using a cosine-based magnification curve.  
+This avoids changing the native taskbar/dock geometry or taking mouse and keyboard input away from it.  
 Settings are managed through GSettings and the GNOME Extensions preferences interface.
 
-The project is experimental and intended for people who want **Zorin OS taskbar icon magnification / macOS-style fisheye without installing a replacement dock**.  
+The project is experimental and intended for people who want **Zorin OS taskbar or dock icon magnification / macOS-style fisheye without installing a replacement dock**.  
 Feedback, compatibility reports and pull requests are welcome.
 
 ## Author and license

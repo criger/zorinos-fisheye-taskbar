@@ -15,6 +15,7 @@ import { hideMagnifiedIcon, showMagnifiedIcon } from './icon-visibility.js';
 import { isStoppedClick, isFreshLaunch, bounceOffset, pointInsideActor } from './launch-bounce.js';
 import { highResolutionSize, highResolutionPlacement, shouldUseHighResolution } from './icon-rendering.js';
 import { clonePlacement } from './icon-geometry.js';
+import { findZorinDashPanels, getActiveDash } from './dash-integration.js';
 import { pixelPerfectScale, findOriginalIconContent } from './pixel-scaling.js';
 import { renderingMode, aaBufferFactor } from './hidef-aa.js';
 import { tooltipPosition } from './tooltip-position.js';
@@ -41,6 +42,9 @@ export default class ZorinFisheyeExtension extends Extension
         this._lastTaskbarSnapshot = '';
         this._manager = null;
         this._managerSignalId = 0;
+        this._dashPanels = new Map();
+        this._currentDash = null;
+        this._lastDashPanelCount = 0;
         this._settings = this.getSettings();
         this._connect(this._settings, 'changed', (_settings, key) =>
         {
@@ -122,6 +126,7 @@ export default class ZorinFisheyeExtension extends Extension
 
         this._disconnectManager();
         this._disconnectPanels();
+        this._dashPanels.clear();
         this._disconnectSignals(this._signals);
         this._hideAll(true);
 
@@ -240,7 +245,8 @@ export default class ZorinFisheyeExtension extends Extension
 
         for (const [panel, record] of this._panels)
         {
-            if (!active.has(panel) || panel.taskbar?._box !== record.box)
+            if (!active.has(panel) || panel.taskbar?._box !== record.box ||
+                panel.panel !== record.actor)
             {
                 this._disconnectSignals(record.signals);
                 this._panels.delete(panel);
@@ -261,7 +267,7 @@ export default class ZorinFisheyeExtension extends Extension
                 continue;
             }
 
-            const record = { box, signals: [] };
+            const record = { box, actor: panel.panel, signals: [] };
             this._connect(box, 'child-added',
                 () => this._scheduleRefresh(), record.signals);
             this._connect(box, 'child-removed',
@@ -593,7 +599,16 @@ export default class ZorinFisheyeExtension extends Extension
         }
 
         this._ensureManager();
-        const panels = this._manager?.panels ?? [];
+        const panels = [
+            ...(this._manager?.panels ?? []),
+            ...findZorinDashPanels(Main, this._dashPanels),
+        ];
+        if (this._dashPanels.size !== this._lastDashPanelCount)
+        {
+            this._lastDashPanelCount = this._dashPanels.size;
+            console.log('[Zorin Fisheye] Zorin Dash panels detected:',
+                this._lastDashPanelCount);
+        }
         this._syncPanels(panels);
         const discovered = new Set();
 
@@ -770,13 +785,19 @@ export default class ZorinFisheyeExtension extends Extension
         // polling its icon list on every movement.
         const previousManager = this._manager;
         this._ensureManager();
+        const dash = getActiveDash(Main);
+        if (dash !== this._currentDash)
+        {
+            this._currentDash = dash;
+            this._scheduleRefresh();
+        }
 
         if (previousManager !== this._manager)
         {
             this._scheduleRefresh();
         }
 
-        if (!this._manager || Main.overview.visible)
+        if (Main.overview.visible)
         {
             this._hideAll(true);
             return;
